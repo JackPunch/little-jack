@@ -30,16 +30,4 @@ func main() {
 		log.Fatalf("Failed to generate text: %v", err)
 	}
 	fmt.Println("AI:", resp)
-
-	// Example 2: Multi-turn context
-	fmt.Println("\n--- Multi-turn example ---")
-	messages := []Message{
-		{Role: "system", Content: "You are a helpful Go programming assistant."},
-		{Role: "user", Content: "How do I read an environment variable in Go?"},
-	}
-	resp2, err := GenerateText(cfg, messages)
-	if err != nil {
-		log.Fatalf("Failed to generate text: %v", err)
-	}
-	fmt.Println("AI:", resp2)
 }

@@ -2,20 +2,49 @@ package main
 
 import (
 	"bufio"
-	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
 
-// LoadDotEnv reads a .env file and sets the variables into the process environment.
-// It skips comments (lines starting with #) and empty lines.
-func LoadDotEnv(path string) error {
+// LoadDotEnv searches for a .env file in multiple locations and loads it.
+// Search order:
+//   1. Current working directory
+//   2. Directory of the executable
+//   3. Directory of this source file (useful for "go run")
+func LoadDotEnv(filename string) error {
+	if filename == "" {
+		filename = ".env"
+	}
+
+	var paths []string
+
+	// 1. directory of the executable
+	if exe, err := os.Executable(); err == nil {
+		paths = append(paths, filepath.Join(filepath.Dir(exe), filename))
+	}
+
+	// 2. directory of this source file (for "go run" development)
+	if _, srcFile, _, ok := runtime.Caller(0); ok {
+		paths = append(paths, filepath.Join(filepath.Dir(srcFile), filename))
+	}
+
+	for _, p := range paths {
+		if err := loadDotEnvFile(p); err == nil {
+			return nil // loaded successfully
+		} else if !os.IsNotExist(err) {
+			return err // file exists but failed to read
+		}
+	}
+
+	return nil // no .env file found anywhere, that's okay
+}
+
+func loadDotEnvFile(path string) error {
 	file, err := os.Open(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // .env file is optional
-		}
-		return fmt.Errorf("failed to open %s: %w", path, err)
+		return err
 	}
 	defer file.Close()
 
@@ -33,9 +62,7 @@ func LoadDotEnv(path string) error {
 
 		key := strings.TrimSpace(parts[0])
 		value := strings.TrimSpace(parts[1])
-
-		// Remove surrounding quotes if present
-		value = strings.Trim(value, `"'`)
+		value = strings.Trim(value, `"'`) // remove surrounding quotes
 
 		// Only set if not already defined in the environment
 		if os.Getenv(key) == "" {
