@@ -6,10 +6,7 @@
 
 ## Project Overview
 
-`little-jack` is a minimal Go CLI tool that sends a single user prompt to a Large Language Model (LLM) API and prints the response. It supports two API formats out of the box:
-
-- **OpenAI-compatible** (e.g., OpenAI, DeepSeek, and other providers that follow the `/chat/completions` schema)
-- **Anthropic** (Claude `/messages` schema)
+`little-jack` is a minimal Go CLI tool that sends a single user prompt to a Large Language Model (LLM) API and prints the response. It supports the **OpenAI-compatible** API format (e.g., OpenAI, DeepSeek, and other providers that follow the `/chat/completions` schema).
 
 The program reads configuration from environment variables (optionally seeded from a `.env` file), accepts an optional prompt as a command-line argument, and outputs the AI response to stdout.
 
@@ -33,7 +30,7 @@ The program reads configuration from environment variables (optionally seeded fr
 ├── go.mod          # Go module definition
 ├── main.go         # Entry point: loads config, reads CLI arg, calls LLM
 ├── env.go          # Custom `.env` file loader (no external libraries)
-├── llm.go          # LLM API client: OpenAI & Anthropic request/response handling
+├── llm.go          # LLM API client: OpenAI request/response handling
 ├── .env.example    # Example environment variables
 ├── .env            # Local environment file (gitignored, may contain real secrets)
 ├── .gitignore      # Ignores .env, build artifacts, coverage, editor files
@@ -50,9 +47,8 @@ The application expects the following environment variables at runtime:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LLM_FORMAT` | No | `openai` | API format to use. Valid values: `openai`, `anthropic` |
 | `LLM_BASE_URL` | **Yes** | — | Base URL of the API (e.g., `api.openai.com/v1`). A scheme is optional; `https://` is added automatically if missing. |
-| `LLM_MODEL_NAME` | **Yes** | — | Model identifier (e.g., `gpt-4o`, `claude-3-sonnet-20240229`) |
+| `LLM_MODEL_NAME` | **Yes** | — | Model identifier (e.g., `gpt-4o`) |
 | `LLM_API_KEY` | **Yes** | — | API key for authentication |
 | `LLM_THINKING_TYPE` | No | — | Thinking mode switch. Valid values: `enabled`, `disabled` |
 | `LLM_REASONING_EFFORT` | No | — | Thinking intensity control. Valid values: `low`, `medium`, `high`, `max` |
@@ -119,7 +115,7 @@ Because the LLM client makes real HTTP calls, consider adding interfaces around 
 - **API keys are secrets.** The `.env` file is listed in `.gitignore`, but verify that secrets are never committed.
 - The existing `.env` file in the working directory may contain a real key. Treat it as sensitive.
 - The custom `.env` loader does not support multi-line values or complex escaping; it trims quotes (`"` and `'`) from values.
-- API keys are sent over HTTPS in the `Authorization` (OpenAI) or `x-api-key` (Anthropic) headers.
+- API keys are sent over HTTPS in the `Authorization` header.
 - There is no retry logic, rate-limit handling, or request logging — be mindful when running in production-like environments.
 
 ---
@@ -130,7 +126,7 @@ Because the LLM client makes real HTTP calls, consider adding interfaces around 
 2. `LoadConfigFromEnv()` validates required variables and returns an `LLMConfig`.
 3. The prompt is taken from `os.Args[1]` or falls back to a hardcoded greeting.
 4. `CreateAgent(cfg, systemPrompt...)` returns a function that builds a message slice (including an optional system message) and delegates to `GenerateText(cfg, messages)`. Thinking controls are read from `cfg.ThinkingType` and `cfg.ReasoningEffort`.
-5. `GenerateText` dispatches to the provider-specific implementation based on `cfg.Format`.
+5. `GenerateText` calls the OpenAI-compatible API endpoint.
 6. The HTTP helper (`doRequest`) uses a 120-second timeout and returns non-200 status codes as errors.
 
 ---
