@@ -137,6 +137,7 @@ func generateTextOpenAI(cfg LLMConfig, messages []Message) (string, error) {
 
 type anthropicRequest struct {
 	Model     string    `json:"model"`
+	System    string    `json:"system,omitempty"`
 	Messages  []Message `json:"messages"`
 	MaxTokens int       `json:"max_tokens"`
 }
@@ -155,9 +156,25 @@ type anthropicResponse struct {
 func generateTextAnthropic(cfg LLMConfig, messages []Message) (string, error) {
 	url := fmt.Sprintf("%s/messages", normalizeBaseURL(cfg.BaseURL))
 
+	// Anthropic expects the system prompt in a top-level "system" field,
+	// not inside the messages array. Extract it here.
+	var system string
+	filtered := make([]Message, 0, len(messages))
+	for _, m := range messages {
+		if m.Role == "system" {
+			if system != "" {
+				system += "\n\n"
+			}
+			system += m.Content
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+
 	body, err := json.Marshal(anthropicRequest{
 		Model:     cfg.ModelName,
-		Messages:  messages,
+		System:    system,
+		Messages:  filtered,
 		MaxTokens: 4096,
 	})
 	if err != nil {
