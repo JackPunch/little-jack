@@ -19,6 +19,7 @@ type LLMConfig struct {
 	APIKey          string
 	ThinkingType    string // enabled/disabled
 	ReasoningEffort string // low/medium/high/max
+	DebugMode       bool   // true to print full request/response instead of chat messages
 }
 
 // Message represents a chat message.
@@ -44,6 +45,7 @@ func LoadConfigFromEnv() (LLMConfig, error) {
 		APIKey:          os.Getenv("LLM_API_KEY"),
 		ThinkingType:    os.Getenv("LLM_THINKING_TYPE"),
 		ReasoningEffort: os.Getenv("LLM_REASONING_EFFORT"),
+		DebugMode:       parseBool(os.Getenv("LLM_DEBUG")),
 	}
 
 	if cfg.Format == "" {
@@ -139,7 +141,7 @@ func generateTextOpenAI(cfg LLMConfig, messages []Message) (LLMResponse, error) 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 
-	resp, err := doRequest(req)
+	resp, err := doRequest(req, cfg.DebugMode)
 	if err != nil {
 		return LLMResponse{}, err
 	}
@@ -233,7 +235,7 @@ func generateTextAnthropic(cfg LLMConfig, messages []Message) (LLMResponse, erro
 	req.Header.Set("x-api-key", cfg.APIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
-	resp, err := doRequest(req)
+	resp, err := doRequest(req, cfg.DebugMode)
 	if err != nil {
 		return LLMResponse{}, err
 	}
@@ -277,7 +279,21 @@ func normalizeBaseURL(base string) string {
 
 // ─── HTTP helper ───
 
-func doRequest(req *http.Request) ([]byte, error) {
+func doRequest(req *http.Request, debug bool) ([]byte, error) {
+	if debug {
+		fmt.Fprintf(os.Stderr, "=== API Request ===\n")
+		fmt.Fprintf(os.Stderr, "%s %s\n", req.Method, req.URL)
+		for k, v := range req.Header {
+			fmt.Fprintf(os.Stderr, "Header: %s: %s\n", k, strings.Join(v, ", "))
+		}
+		if req.Body != nil {
+			bodyBytes, _ := io.ReadAll(req.Body)
+			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			fmt.Fprintf(os.Stderr, "Body:\n%s\n", string(bodyBytes))
+		}
+		fmt.Fprintf(os.Stderr, "===================\n")
+	}
+
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -290,9 +306,24 @@ func doRequest(req *http.Request) ([]byte, error) {
 		return nil, fmt.Errorf("failed to read body: %w", err)
 	}
 
+	if debug {
+		fmt.Fprintf(os.Stderr, "=== API Response ===\n")
+		fmt.Fprintf(os.Stderr, "Status: %s\n", resp.Status)
+		for k, v := range resp.Header {
+			fmt.Fprintf(os.Stderr, "Header: %s: %s\n", k, strings.Join(v, ", "))
+		}
+		fmt.Fprintf(os.Stderr, "Body:\n%s\n", string(body))
+		fmt.Fprintf(os.Stderr, "====================\n")
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	return body, nil
+}
+
+func parseBool(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return s == "true" || s == "1" || s == "yes" || s == "on"
 }

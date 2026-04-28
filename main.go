@@ -26,14 +26,18 @@ func main() {
 		prompt = os.Args[1]
 	}
 
-	fmt.Println("User:", prompt)
+	if !cfg.DebugMode {
+		fmt.Println("User:", prompt)
+	}
 	resp, err := agent(prompt)
 	if err != nil {
 		log.Fatalf("Failed to generate text: %v", err)
 	}
-	if resp.ReasoningContent != "" {
-		fmt.Println("Reasoning:", resp.ReasoningContent)
-		fmt.Println("---")
+	if !cfg.DebugMode {
+		if resp.ReasoningContent != "" {
+			fmt.Println("Reasoning:", resp.ReasoningContent)
+			fmt.Println("---")
+		}
+		fmt.Println("AI:", resp.Content)
 	}
-	fmt.Println("AI:", resp.Content)
 }
