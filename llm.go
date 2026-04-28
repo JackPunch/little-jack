@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -15,13 +14,12 @@ import (
 // LLMConfig holds the configuration for the LLM API client.
 // This client uses the OpenAI-compatible API format.
 type LLMConfig struct {
-	BaseURL         string // e.g., "api.openai.com/v1"
-	ModelName       string // e.g., "gpt-4o"
+	BaseURL         string    // e.g., "api.openai.com/v1"
+	ModelName       string    // e.g., "gpt-4o"
 	APIKey          string
-	ThinkingType    string // enabled/disabled
-	ReasoningEffort string // low/medium/high/max
-	DebugMode       bool   // true to print full request/response instead of chat messages
-	Stream          bool   // true to enable streaming output; forced false when DebugMode is true
+	ThinkingType    string    // enabled/disabled
+	ReasoningEffort string    // low/medium/high/max
+	DebugOutput     io.Writer // non-nil enables HTTP request/response logging
 }
 
 // Message represents a chat message.
@@ -37,30 +35,10 @@ type LLMResponse struct {
 	ReasoningContent string
 }
 
-// LoadConfigFromEnv loads LLM configuration from environment variables.
-// Expected env vars: LLM_BASE_URL, LLM_MODEL_NAME, LLM_API_KEY
-func LoadConfigFromEnv() (LLMConfig, error) {
-	cfg := LLMConfig{
-		BaseURL:         os.Getenv("LLM_BASE_URL"),
-		ModelName:       os.Getenv("LLM_MODEL_NAME"),
-		APIKey:          os.Getenv("LLM_API_KEY"),
-		ThinkingType:    os.Getenv("LLM_THINKING_TYPE"),
-		ReasoningEffort: os.Getenv("LLM_REASONING_EFFORT"),
-		DebugMode:       parseBool(os.Getenv("LLM_DEBUG")),
-		Stream:          parseBool(os.Getenv("LLM_STREAM")),
-	}
-
-	if cfg.BaseURL == "" {
-		return LLMConfig{}, fmt.Errorf("missing required env var: LLM_BASE_URL")
-	}
-	if cfg.ModelName == "" {
-		return LLMConfig{}, fmt.Errorf("missing required env var: LLM_MODEL_NAME")
-	}
-	if cfg.APIKey == "" {
-		return LLMConfig{}, fmt.Errorf("missing required env var: LLM_API_KEY")
-	}
-
-	return cfg, nil
+// StreamChunk represents a piece of the streaming response.
+type StreamChunk struct {
+	Content          string
+	ReasoningContent string
 }
 
 // GenerateText calls the LLM API with the given context messages.
@@ -92,7 +70,7 @@ func GenerateText(cfg LLMConfig, messages []Message) (LLMResponse, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 
-	resp, err := doRequest(req, cfg.DebugMode)
+	resp, err := doRequest(req, cfg.DebugOutput)
 	if err != nil {
 		return LLMResponse{}, err
 	}
@@ -117,9 +95,7 @@ func GenerateText(cfg LLMConfig, messages []Message) (LLMResponse, error) {
 
 // CreateAgent creates a reusable agent function bound to the given config
 // and an optional system prompt. The returned function accepts a user prompt
-// and returns the model's response including any reasoning content.
-// It routes to GenerateTextStream when cfg.Stream is true (and debug mode is off),
-// otherwise it uses the non-streaming GenerateText.
+// and returns the model's complete response.
 func CreateAgent(cfg LLMConfig, systemPrompt ...string) func(string) (LLMResponse, error) {
 	return func(prompt string) (LLMResponse, error) {
 		messages := make([]Message, 0, len(systemPrompt)+1)
@@ -129,10 +105,23 @@ func CreateAgent(cfg LLMConfig, systemPrompt ...string) func(string) (LLMRespons
 			}
 		}
 		messages = append(messages, Message{Role: "user", Content: prompt})
-		if cfg.Stream && !cfg.DebugMode {
-			return GenerateTextStream(cfg, messages)
-		}
 		return GenerateText(cfg, messages)
+	}
+}
+
+// CreateStreamingAgent creates a reusable streaming agent function.
+// The returned function accepts a user prompt and an onChunk callback,
+// which is invoked for every token received from the API.
+func CreateStreamingAgent(cfg LLMConfig, systemPrompt ...string) func(string, func(StreamChunk)) (LLMResponse, error) {
+	return func(prompt string, onChunk func(StreamChunk)) (LLMResponse, error) {
+		messages := make([]Message, 0, len(systemPrompt)+1)
+		for _, sp := range systemPrompt {
+			if sp != "" {
+				messages = append(messages, Message{Role: "system", Content: sp})
+			}
+		}
+		messages = append(messages, Message{Role: "user", Content: prompt})
+		return GenerateTextStream(cfg, messages, onChunk)
 	}
 }
 
@@ -179,19 +168,19 @@ func normalizeBaseURL(base string) string {
 
 // ─── HTTP helper ───
 
-func doRequest(req *http.Request, debug bool) ([]byte, error) {
-	if debug {
-		fmt.Fprintf(os.Stderr, "=== API Request ===\n")
-		fmt.Fprintf(os.Stderr, "%s %s\n", req.Method, req.URL)
+func doRequest(req *http.Request, debugOut io.Writer) ([]byte, error) {
+	if debugOut != nil {
+		fmt.Fprintf(debugOut, "=== API Request ===\n")
+		fmt.Fprintf(debugOut, "%s %s\n", req.Method, req.URL)
 		for k, v := range req.Header {
-			fmt.Fprintf(os.Stderr, "Header: %s: %s\n", k, strings.Join(v, ", "))
+			fmt.Fprintf(debugOut, "Header: %s: %s\n", k, strings.Join(v, ", "))
 		}
 		if req.Body != nil {
 			bodyBytes, _ := io.ReadAll(req.Body)
 			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			fmt.Fprintf(os.Stderr, "Body:\n%s\n", string(bodyBytes))
+			fmt.Fprintf(debugOut, "Body:\n%s\n", string(bodyBytes))
 		}
-		fmt.Fprintf(os.Stderr, "===================\n\n")
+		fmt.Fprintf(debugOut, "===================\n\n")
 	}
 
 	client := &http.Client{Timeout: 120 * time.Second}
@@ -206,14 +195,14 @@ func doRequest(req *http.Request, debug bool) ([]byte, error) {
 		return nil, fmt.Errorf("failed to read body: %w", err)
 	}
 
-	if debug {
-		fmt.Fprintf(os.Stderr, "=== API Response ===\n")
-		fmt.Fprintf(os.Stderr, "Status: %s\n", resp.Status)
+	if debugOut != nil {
+		fmt.Fprintf(debugOut, "=== API Response ===\n")
+		fmt.Fprintf(debugOut, "Status: %s\n", resp.Status)
 		for k, v := range resp.Header {
-			fmt.Fprintf(os.Stderr, "Header: %s: %s\n", k, strings.Join(v, ", "))
+			fmt.Fprintf(debugOut, "Header: %s: %s\n", k, strings.Join(v, ", "))
 		}
-		fmt.Fprintf(os.Stderr, "Body:\n%s\n", string(body))
-		fmt.Fprintf(os.Stderr, "====================\n")
+		fmt.Fprintf(debugOut, "Body:\n%s\n", string(body))
+		fmt.Fprintf(debugOut, "====================\n")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -224,8 +213,8 @@ func doRequest(req *http.Request, debug bool) ([]byte, error) {
 }
 
 // GenerateTextStream calls the LLM API in streaming mode.
-// It prints tokens to stdout in real time and returns the complete response.
-func GenerateTextStream(cfg LLMConfig, messages []Message) (LLMResponse, error) {
+// It invokes onChunk for every received delta and returns the complete aggregated response.
+func GenerateTextStream(cfg LLMConfig, messages []Message, onChunk func(StreamChunk)) (LLMResponse, error) {
 	url := fmt.Sprintf("%s/chat/completions", normalizeBaseURL(cfg.BaseURL))
 
 	reqBody := openAIRequest{
@@ -253,6 +242,16 @@ func GenerateTextStream(cfg LLMConfig, messages []Message) (LLMResponse, error) 
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	req.Header.Set("Accept", "text/event-stream")
 
+	if cfg.DebugOutput != nil {
+		fmt.Fprintf(cfg.DebugOutput, "=== API Request ===\n")
+		fmt.Fprintf(cfg.DebugOutput, "%s %s\n", req.Method, req.URL)
+		for k, v := range req.Header {
+			fmt.Fprintf(cfg.DebugOutput, "Header: %s: %s\n", k, strings.Join(v, ", "))
+		}
+		fmt.Fprintf(cfg.DebugOutput, "Body:\n%s\n", string(body))
+		fmt.Fprintf(cfg.DebugOutput, "===================\n\n")
+	}
+
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -262,12 +261,14 @@ func GenerateTextStream(cfg LLMConfig, messages []Message) (LLMResponse, error) 
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
+		if cfg.DebugOutput != nil {
+			fmt.Fprintf(cfg.DebugOutput, "=== API Response ===\nStatus: %s\nBody:\n%s\n====================\n", resp.Status, string(bodyBytes))
+		}
 		return LLMResponse{}, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	reader := bufio.NewReader(resp.Body)
 	var result LLMResponse
-	var reasoningStarted, contentStarted bool
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -300,37 +301,18 @@ func GenerateTextStream(cfg LLMConfig, messages []Message) (LLMResponse, error) 
 		}
 
 		delta := chunk.Choices[0].Delta
-		if delta.ReasoningContent != "" {
-			if !reasoningStarted {
-				fmt.Println("\n---")
-				fmt.Print("Reasoning: ")
-				reasoningStarted = true
+		if delta.ReasoningContent != "" || delta.Content != "" {
+			if onChunk != nil {
+				onChunk(StreamChunk{
+					Content:          delta.Content,
+					ReasoningContent: delta.ReasoningContent,
+				})
 			}
-			fmt.Print(delta.ReasoningContent)
 			result.ReasoningContent += delta.ReasoningContent
-		}
-
-		if delta.Content != "" {
-			if !contentStarted {
-				if reasoningStarted {
-					fmt.Println("\n---")
-				}
-				fmt.Print("AI: ")
-				contentStarted = true
-			}
-			fmt.Print(delta.Content)
 			result.Content += delta.Content
 		}
-	}
-
-	if reasoningStarted || contentStarted {
-		fmt.Println()
 	}
 
 	return result, nil
 }
 
-func parseBool(s string) bool {
-	s = strings.ToLower(strings.TrimSpace(s))
-	return s == "true" || s == "1" || s == "yes" || s == "on"
-}

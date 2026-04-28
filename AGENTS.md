@@ -54,8 +54,8 @@ The application expects the following environment variables at runtime:
 | `LLM_API_KEY` | **Yes** | — | API key for authentication |
 | `LLM_THINKING_TYPE` | No | — | Thinking mode switch. Valid values: `enabled`, `disabled` |
 | `LLM_REASONING_EFFORT` | No | — | Thinking intensity control. Valid values: `low`, `medium`, `high`, `max` |
-| `LLM_DEBUG` | No | `false` | Prints full HTTP request/response to stderr instead of chat messages. Valid values: `true`, `1`, `yes`, `on`. |
-| `LLM_STREAM` | No | `false` | Whether to use streaming output. Valid values: `true`, `1`, `yes`, `on`. **Always disabled when `LLM_DEBUG` is enabled.** |
+| `LLM_DEBUG` | No | `false` | Enables HTTP request/response logging. When set, `LoadConfigFromEnv` assigns `os.Stderr` to `cfg.DebugOutput`. Valid values: `true`, `1`, `yes`, `on`. |
+| `LLM_STREAM` | No | `false` | Whether to use streaming output in the demo `main`. Valid values: `true`, `1`, `yes`, `on`. **Always disabled when `LLM_DEBUG` is enabled.** This is read by `main`, not by the framework. |
 
 `.env` File Support  
 `env.go` contains a lightweight loader that searches for `.env` in two locations:
@@ -128,12 +128,11 @@ Because the LLM client makes real HTTP calls, consider adding interfaces around 
 
 ## Runtime Architecture
 
-1. `main()` calls `LoadDotEnv(".env")` to optionally load local environment variables.
-2. `LoadConfigFromEnv()` validates required variables and returns an `LLMConfig`.
-3. The prompt is taken from `os.Args[1]` or falls back to a hardcoded greeting (`"Hello, introduce yourself in one sentence."`).
-4. `CreateAgent(cfg, systemPrompt...)` returns a function that builds a message slice (including an optional system message) and delegates to `GenerateText(cfg, messages)` or `GenerateTextStream(cfg, messages)`. Thinking controls are read from `cfg.ThinkingType` and `cfg.ReasoningEffort`.
-5. `GenerateText` calls the OpenAI-compatible API endpoint (`/chat/completions`) in non-streaming mode. `GenerateTextStream` opens an SSE connection and prints tokens to stdout in real time. Streaming is forced off when `cfg.DebugMode` is `true`.
-6. The HTTP helper (`doRequest`) uses a 120-second timeout and returns non-200 status codes as errors. When `cfg.DebugMode` is `true`, it prints the full request and response bodies to stderr.
+1. `main()` calls `LoadDotEnv(".env")` to optionally load local environment variables, then calls `LoadConfigFromEnv()` to read all env vars and construct an `LLMConfig`. The LLM layer (`llm.go`) does not read environment variables.
+2. The prompt is taken from `os.Args[1]` or falls back to a hardcoded greeting (`"Hello, introduce yourself in one sentence."`).
+3. `main` decides which factory to use based on its own logic (e.g. checking `LLM_STREAM`). `CreateAgent(cfg, systemPrompt...)` returns a non-streaming function that builds a message slice and delegates to `GenerateText(cfg, messages)`. `CreateStreamingAgent(cfg, systemPrompt...)` returns a streaming variant that delegates to `GenerateTextStream(cfg, messages, onChunk)`. Thinking controls are passed through `cfg.ThinkingType` and `cfg.ReasoningEffort`.
+4. `GenerateText` calls the OpenAI-compatible API endpoint (`/chat/completions`) in non-streaming mode. `GenerateTextStream` opens an SSE connection and invokes the caller-supplied `onChunk` callback for every token; it does **not** perform any IO itself. Both functions respect `cfg.DebugOutput` for request/response logging.
+5. The HTTP helper (`doRequest`) uses a 120-second timeout and returns non-200 status codes as errors. When a non-nil `debugOut` is provided, it writes the full request and response bodies to that writer.
 
 ---
 
