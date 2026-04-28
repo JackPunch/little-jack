@@ -85,7 +85,7 @@ No Makefile, build scripts, or CI/CD pipelines exist in the repository.
 
 - Follow standard Go formatting (`gofmt`).
 - Keep everything in `package main`; do not introduce sub-packages unless the project grows significantly.
-- Use exported names (`PascalCase`) only for entities that need to be accessed across files. Currently all cross-file functions and types are exported (e.g., `LoadDotEnv`, `LoadConfigFromEnv`, `GenerateText`, `GenerateTextSimple`).
+- Use exported names (`PascalCase`) only for entities that need to be accessed across files. Currently all cross-file functions and types are exported (e.g., `LoadDotEnv`, `LoadConfigFromEnv`, `GenerateText`, `CreateAgent`).
 - Group related code with comment separators (see `llm.go` for the `// ─── OpenAI format ───` style).
 - Prefer the standard library over third-party dependencies.
 
@@ -127,7 +127,7 @@ Because the LLM client makes real HTTP calls, consider adding interfaces around 
 1. `main()` calls `LoadDotEnv(".env")` to optionally load local environment variables.
 2. `LoadConfigFromEnv()` validates required variables and returns an `LLMConfig`.
 3. The prompt is taken from `os.Args[1]` or falls back to a hardcoded greeting.
-4. `GenerateTextSimple(cfg, prompt)` builds a single-message slice and delegates to `GenerateText(cfg, messages)`.
+4. `CreateAgent(cfg, systemPrompt...)` returns a function that builds a message slice (including an optional system message) and delegates to `GenerateText(cfg, messages)`.
 5. `GenerateText` dispatches to the provider-specific implementation based on `cfg.Format`.
 6. The HTTP helper (`doRequest`) uses a 120-second timeout and returns non-200 status codes as errors.
 

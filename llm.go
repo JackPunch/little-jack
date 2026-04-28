@@ -64,12 +64,20 @@ func GenerateText(cfg LLMConfig, messages []Message) (string, error) {
 	}
 }
 
-// GenerateTextSimple is a convenience wrapper that takes a single user prompt.
-func GenerateTextSimple(cfg LLMConfig, prompt string) (string, error) {
-	messages := []Message{
-		{Role: "user", Content: prompt},
+// CreateAgent creates a reusable agent function bound to the given config
+// and an optional system prompt. The returned function accepts a user prompt
+// and returns the model's response.
+func CreateAgent(cfg LLMConfig, systemPrompt ...string) func(string) (string, error) {
+	return func(prompt string) (string, error) {
+		messages := make([]Message, 0, len(systemPrompt)+1)
+		for _, sp := range systemPrompt {
+			if sp != "" {
+				messages = append(messages, Message{Role: "system", Content: sp})
+			}
+		}
+		messages = append(messages, Message{Role: "user", Content: prompt})
+		return GenerateText(cfg, messages)
 	}
-	return GenerateText(cfg, messages)
 }
 
 // ─── OpenAI format ───

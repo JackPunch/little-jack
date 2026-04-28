@@ -18,14 +18,16 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Example 1: Simple single prompt
+	// Example: Create an agent with an optional system prompt.
+	agent := CreateAgent(cfg, "You are a helpful assistant.")
+
 	prompt := "Hello, introduce yourself in one sentence."
 	if len(os.Args) > 1 {
 		prompt = os.Args[1]
 	}
 
 	fmt.Println("User:", prompt)
-	resp, err := GenerateTextSimple(cfg, prompt)
+	resp, err := agent(prompt)
 	if err != nil {
 		log.Fatalf("Failed to generate text: %v", err)
 	}
