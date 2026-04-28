@@ -33,7 +33,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to generate text: %v", err)
 	}
-	if !cfg.DebugMode {
+	if !cfg.DebugMode && !cfg.Stream {
 		if resp.ReasoningContent != "" {
 			fmt.Println("\n---")
 			fmt.Println("Reasoning:", resp.ReasoningContent)

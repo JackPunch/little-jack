@@ -1,6 +1,7 @@
+<!-- From: /Users/jackpunch/WorkSpace/little-jack/AGENTS.md -->
 # AGENTS.md — little-jack
 
-> This file is for AI coding agents. It describes the project architecture, conventions, and workflows. All comments and documentation in the codebase are written in English.
+> This file is for AI coding agents. It describes the project architecture, conventions, and workflows. All comments and documentation in the codebase are written in English, with the exception of `README.md` which contains brief Chinese notes about the test environment.
 
 ---
 
@@ -30,11 +31,12 @@ The program reads configuration from environment variables (optionally seeded fr
 ├── go.mod          # Go module definition
 ├── main.go         # Entry point: loads config, reads CLI arg, calls LLM
 ├── env.go          # Custom `.env` file loader (no external libraries)
-├── llm.go          # LLM API client: OpenAI request/response handling
+├── llm.go          # LLM API client: config, OpenAI request/response, streaming
 ├── .env.example    # Example environment variables
 ├── .env            # Local environment file (gitignored, may contain real secrets)
 ├── .gitignore      # Ignores .env, build artifacts, coverage, editor files
-└── README.md       # Currently empty
+├── little-jack     # Pre-built binary (gitignored)
+└── README.md       # Brief Chinese notes about the test environment
 ```
 
 All source files belong to `package main`. There are no sub-packages, no internal packages, and no generated code.
@@ -48,17 +50,21 @@ The application expects the following environment variables at runtime:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `LLM_BASE_URL` | **Yes** | — | Base URL of the API (e.g., `api.openai.com/v1`). A scheme is optional; `https://` is added automatically if missing. |
-| `LLM_MODEL_NAME` | **Yes** | — | Model identifier (e.g., `gpt-4o`) |
+| `LLM_MODEL_NAME` | **Yes** | — | Model identifier (e.g., `gpt-4o`, `o3-mini`) |
 | `LLM_API_KEY` | **Yes** | — | API key for authentication |
 | `LLM_THINKING_TYPE` | No | — | Thinking mode switch. Valid values: `enabled`, `disabled` |
 | `LLM_REASONING_EFFORT` | No | — | Thinking intensity control. Valid values: `low`, `medium`, `high`, `max` |
+| `LLM_DEBUG` | No | `false` | Prints full HTTP request/response to stderr instead of chat messages. Valid values: `true`, `1`, `yes`, `on`. |
+| `LLM_STREAM` | No | `false` | Whether to use streaming output. Valid values: `true`, `1`, `yes`, `on`. **Always disabled when `LLM_DEBUG` is enabled.** |
 
 `.env` File Support  
 `env.go` contains a lightweight loader that searches for `.env` in two locations:
 1. Directory of the running executable
 2. Directory of the source file (useful during `go run`)
 
-It only sets a variable if it is **not already defined** in the process environment, so explicit exports always take precedence.
+**Note:** The doc comment in `env.go` mentions a third search location (current working directory), but the implementation does **not** include it. The actual search order is executable directory first, then source file directory.
+
+It only sets a variable if it is **not already defined** in the process environment (checked via `os.Getenv`), so explicit exports always take precedence. The loader does not support multi-line values or complex escaping; it trims surrounding quotes (`"` and `'`) from values.
 
 ---
 
@@ -66,7 +72,7 @@ It only sets a variable if it is **not already defined** in the process environm
 
 ```bash
 # Build the binary
-go build -o little-jack.exe
+go build -o little-jack
 
 # Run directly (requires env vars or a .env file)
 go run .
@@ -124,10 +130,10 @@ Because the LLM client makes real HTTP calls, consider adding interfaces around 
 
 1. `main()` calls `LoadDotEnv(".env")` to optionally load local environment variables.
 2. `LoadConfigFromEnv()` validates required variables and returns an `LLMConfig`.
-3. The prompt is taken from `os.Args[1]` or falls back to a hardcoded greeting.
-4. `CreateAgent(cfg, systemPrompt...)` returns a function that builds a message slice (including an optional system message) and delegates to `GenerateText(cfg, messages)`. Thinking controls are read from `cfg.ThinkingType` and `cfg.ReasoningEffort`.
-5. `GenerateText` calls the OpenAI-compatible API endpoint.
-6. The HTTP helper (`doRequest`) uses a 120-second timeout and returns non-200 status codes as errors.
+3. The prompt is taken from `os.Args[1]` or falls back to a hardcoded greeting (`"Hello, introduce yourself in one sentence."`).
+4. `CreateAgent(cfg, systemPrompt...)` returns a function that builds a message slice (including an optional system message) and delegates to `GenerateText(cfg, messages)` or `GenerateTextStream(cfg, messages)`. Thinking controls are read from `cfg.ThinkingType` and `cfg.ReasoningEffort`.
+5. `GenerateText` calls the OpenAI-compatible API endpoint (`/chat/completions`) in non-streaming mode. `GenerateTextStream` opens an SSE connection and prints tokens to stdout in real time. Streaming is forced off when `cfg.DebugMode` is `true`.
+6. The HTTP helper (`doRequest`) uses a 120-second timeout and returns non-200 status codes as errors. When `cfg.DebugMode` is `true`, it prints the full request and response bodies to stderr.
 
 ---
 

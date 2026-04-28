@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -20,6 +21,7 @@ type LLMConfig struct {
 	ThinkingType    string // enabled/disabled
 	ReasoningEffort string // low/medium/high/max
 	DebugMode       bool   // true to print full request/response instead of chat messages
+	Stream          bool   // true to enable streaming output; forced false when DebugMode is true
 }
 
 // Message represents a chat message.
@@ -45,6 +47,7 @@ func LoadConfigFromEnv() (LLMConfig, error) {
 		ThinkingType:    os.Getenv("LLM_THINKING_TYPE"),
 		ReasoningEffort: os.Getenv("LLM_REASONING_EFFORT"),
 		DebugMode:       parseBool(os.Getenv("LLM_DEBUG")),
+		Stream:          parseBool(os.Getenv("LLM_STREAM")),
 	}
 
 	if cfg.BaseURL == "" {
@@ -61,13 +64,14 @@ func LoadConfigFromEnv() (LLMConfig, error) {
 }
 
 // GenerateText calls the LLM API with the given context messages.
-// It uses the OpenAI-compatible API format.
+// It uses the OpenAI-compatible API format (non-streaming).
 func GenerateText(cfg LLMConfig, messages []Message) (LLMResponse, error) {
 	url := fmt.Sprintf("%s/chat/completions", normalizeBaseURL(cfg.BaseURL))
 
 	reqBody := openAIRequest{
 		Model:    cfg.ModelName,
 		Messages: messages,
+		Stream:   false,
 	}
 	if cfg.ThinkingType != "" {
 		reqBody.Thinking = &thinkingConfig{Type: cfg.ThinkingType}
@@ -114,6 +118,8 @@ func GenerateText(cfg LLMConfig, messages []Message) (LLMResponse, error) {
 // CreateAgent creates a reusable agent function bound to the given config
 // and an optional system prompt. The returned function accepts a user prompt
 // and returns the model's response including any reasoning content.
+// It routes to GenerateTextStream when cfg.Stream is true (and debug mode is off),
+// otherwise it uses the non-streaming GenerateText.
 func CreateAgent(cfg LLMConfig, systemPrompt ...string) func(string) (LLMResponse, error) {
 	return func(prompt string) (LLMResponse, error) {
 		messages := make([]Message, 0, len(systemPrompt)+1)
@@ -123,6 +129,9 @@ func CreateAgent(cfg LLMConfig, systemPrompt ...string) func(string) (LLMRespons
 			}
 		}
 		messages = append(messages, Message{Role: "user", Content: prompt})
+		if cfg.Stream && !cfg.DebugMode {
+			return GenerateTextStream(cfg, messages)
+		}
 		return GenerateText(cfg, messages)
 	}
 }
@@ -130,14 +139,25 @@ func CreateAgent(cfg LLMConfig, systemPrompt ...string) func(string) (LLMRespons
 // ─── OpenAI format ───
 
 type openAIRequest struct {
-	Model           string         `json:"model"`
-	Messages        []Message      `json:"messages"`
+	Model           string          `json:"model"`
+	Messages        []Message       `json:"messages"`
 	Thinking        *thinkingConfig `json:"thinking,omitempty"`
-	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
+	Stream          bool            `json:"stream"`
 }
 
 type thinkingConfig struct {
 	Type string `json:"type"`
+}
+
+type openAIStreamResponse struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Choices []struct {
+		Index        int     `json:"index"`
+		Delta        Message `json:"delta"`
+		FinishReason *string `json:"finish_reason"`
+	} `json:"choices"`
 }
 
 type openAIResponse struct {
@@ -201,6 +221,113 @@ func doRequest(req *http.Request, debug bool) ([]byte, error) {
 	}
 
 	return body, nil
+}
+
+// GenerateTextStream calls the LLM API in streaming mode.
+// It prints tokens to stdout in real time and returns the complete response.
+func GenerateTextStream(cfg LLMConfig, messages []Message) (LLMResponse, error) {
+	url := fmt.Sprintf("%s/chat/completions", normalizeBaseURL(cfg.BaseURL))
+
+	reqBody := openAIRequest{
+		Model:    cfg.ModelName,
+		Messages: messages,
+		Stream:   true,
+	}
+	if cfg.ThinkingType != "" {
+		reqBody.Thinking = &thinkingConfig{Type: cfg.ThinkingType}
+	}
+	if cfg.ReasoningEffort != "" {
+		reqBody.ReasoningEffort = cfg.ReasoningEffort
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return LLMResponse{}, err
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return LLMResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	req.Header.Set("Accept", "text/event-stream")
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return LLMResponse{}, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return LLMResponse{}, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	reader := bufio.NewReader(resp.Body)
+	var result LLMResponse
+	var reasoningStarted, contentStarted bool
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return LLMResponse{}, err
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk openAIStreamResponse
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+
+		delta := chunk.Choices[0].Delta
+		if delta.ReasoningContent != "" {
+			if !reasoningStarted {
+				fmt.Println("\n---")
+				fmt.Print("Reasoning: ")
+				reasoningStarted = true
+			}
+			fmt.Print(delta.ReasoningContent)
+			result.ReasoningContent += delta.ReasoningContent
+		}
+
+		if delta.Content != "" {
+			if !contentStarted {
+				if reasoningStarted {
+					fmt.Println("\n---")
+				}
+				fmt.Print("AI: ")
+				contentStarted = true
+			}
+			fmt.Print(delta.Content)
+			result.Content += delta.Content
+		}
+	}
+
+	if reasoningStarted || contentStarted {
+		fmt.Println()
+	}
+
+	return result, nil
 }
 
 func parseBool(s string) bool {
