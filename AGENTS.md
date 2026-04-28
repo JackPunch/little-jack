@@ -54,6 +54,8 @@ The application expects the following environment variables at runtime:
 | `LLM_BASE_URL` | **Yes** | — | Base URL of the API (e.g., `api.openai.com/v1`). A scheme is optional; `https://` is added automatically if missing. |
 | `LLM_MODEL_NAME` | **Yes** | — | Model identifier (e.g., `gpt-4o`, `claude-3-sonnet-20240229`) |
 | `LLM_API_KEY` | **Yes** | — | API key for authentication |
+| `LLM_THINKING_TYPE` | No | — | Thinking mode switch. Valid values: `enabled`, `disabled` |
+| `LLM_REASONING_EFFORT` | No | — | Thinking intensity control. Valid values: `low`, `medium`, `high`, `max` |
 
 `.env` File Support  
 `env.go` contains a lightweight loader that searches for `.env` in two locations:
@@ -127,7 +129,7 @@ Because the LLM client makes real HTTP calls, consider adding interfaces around 
 1. `main()` calls `LoadDotEnv(".env")` to optionally load local environment variables.
 2. `LoadConfigFromEnv()` validates required variables and returns an `LLMConfig`.
 3. The prompt is taken from `os.Args[1]` or falls back to a hardcoded greeting.
-4. `CreateAgent(cfg, systemPrompt...)` returns a function that builds a message slice (including an optional system message) and delegates to `GenerateText(cfg, messages)`.
+4. `CreateAgent(cfg, systemPrompt...)` returns a function that builds a message slice (including an optional system message) and delegates to `GenerateText(cfg, messages)`. Thinking controls are read from `cfg.ThinkingType` and `cfg.ReasoningEffort`.
 5. `GenerateText` dispatches to the provider-specific implementation based on `cfg.Format`.
 6. The HTTP helper (`doRequest`) uses a 120-second timeout and returns non-200 status codes as errors.
 

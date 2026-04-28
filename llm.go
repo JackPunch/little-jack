@@ -13,26 +13,37 @@ import (
 
 // LLMConfig holds the configuration for the LLM API client.
 type LLMConfig struct {
-	Format    string // e.g., "openai" or "anthropic"
-	BaseURL   string // e.g., "api.openai.com/v1" or "api.anthropic.com/v1"
-	ModelName string // e.g., "gpt-4o" or "claude-3-sonnet-20240229"
-	APIKey    string
+	Format          string // e.g., "openai" or "anthropic"
+	BaseURL         string // e.g., "api.openai.com/v1" or "api.anthropic.com/v1"
+	ModelName       string // e.g., "gpt-4o" or "claude-3-sonnet-20240229"
+	APIKey          string
+	ThinkingType    string // enabled/disabled
+	ReasoningEffort string // low/medium/high/max
 }
 
 // Message represents a chat message.
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+}
+
+// LLMResponse holds both the final answer and the reasoning chain.
+type LLMResponse struct {
+	Content          string
+	ReasoningContent string
 }
 
 // LoadConfigFromEnv loads LLM configuration from environment variables.
 // Expected env vars: LLM_FORMAT, LLM_BASE_URL, LLM_MODEL_NAME, LLM_API_KEY
 func LoadConfigFromEnv() (LLMConfig, error) {
 	cfg := LLMConfig{
-		Format:    os.Getenv("LLM_FORMAT"),
-		BaseURL:   os.Getenv("LLM_BASE_URL"),
-		ModelName: os.Getenv("LLM_MODEL_NAME"),
-		APIKey:    os.Getenv("LLM_API_KEY"),
+		Format:          os.Getenv("LLM_FORMAT"),
+		BaseURL:         os.Getenv("LLM_BASE_URL"),
+		ModelName:       os.Getenv("LLM_MODEL_NAME"),
+		APIKey:          os.Getenv("LLM_API_KEY"),
+		ThinkingType:    os.Getenv("LLM_THINKING_TYPE"),
+		ReasoningEffort: os.Getenv("LLM_REASONING_EFFORT"),
 	}
 
 	if cfg.Format == "" {
@@ -53,22 +64,22 @@ func LoadConfigFromEnv() (LLMConfig, error) {
 
 // GenerateText calls the LLM API with the given context messages.
 // It automatically selects the correct API format based on cfg.Format.
-func GenerateText(cfg LLMConfig, messages []Message) (string, error) {
+func GenerateText(cfg LLMConfig, messages []Message) (LLMResponse, error) {
 	switch cfg.Format {
 	case "openai":
 		return generateTextOpenAI(cfg, messages)
 	case "anthropic":
 		return generateTextAnthropic(cfg, messages)
 	default:
-		return "", fmt.Errorf("unsupported LLM format: %s", cfg.Format)
+		return LLMResponse{}, fmt.Errorf("unsupported LLM format: %s", cfg.Format)
 	}
 }
 
 // CreateAgent creates a reusable agent function bound to the given config
 // and an optional system prompt. The returned function accepts a user prompt
-// and returns the model's response.
-func CreateAgent(cfg LLMConfig, systemPrompt ...string) func(string) (string, error) {
-	return func(prompt string) (string, error) {
+// and returns the model's response including any reasoning content.
+func CreateAgent(cfg LLMConfig, systemPrompt ...string) func(string) (LLMResponse, error) {
+	return func(prompt string) (LLMResponse, error) {
 		messages := make([]Message, 0, len(systemPrompt)+1)
 		for _, sp := range systemPrompt {
 			if sp != "" {
@@ -83,8 +94,14 @@ func CreateAgent(cfg LLMConfig, systemPrompt ...string) func(string) (string, er
 // ─── OpenAI format ───
 
 type openAIRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
+	Model           string         `json:"model"`
+	Messages        []Message      `json:"messages"`
+	Thinking        *thinkingConfig `json:"thinking,omitempty"`
+	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+}
+
+type thinkingConfig struct {
+	Type string `json:"type"`
 }
 
 type openAIResponse struct {
@@ -96,56 +113,75 @@ type openAIResponse struct {
 	} `json:"error"`
 }
 
-func generateTextOpenAI(cfg LLMConfig, messages []Message) (string, error) {
+func generateTextOpenAI(cfg LLMConfig, messages []Message) (LLMResponse, error) {
 	url := fmt.Sprintf("%s/chat/completions", normalizeBaseURL(cfg.BaseURL))
 
-	body, err := json.Marshal(openAIRequest{
+	reqBody := openAIRequest{
 		Model:    cfg.ModelName,
 		Messages: messages,
-	})
+	}
+	if cfg.ThinkingType != "" {
+		reqBody.Thinking = &thinkingConfig{Type: cfg.ThinkingType}
+	}
+	if cfg.ReasoningEffort != "" {
+		reqBody.ReasoningEffort = cfg.ReasoningEffort
+	}
+
+	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return LLMResponse{}, err
 	}
 
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return LLMResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 
 	resp, err := doRequest(req)
 	if err != nil {
-		return "", err
+		return LLMResponse{}, err
 	}
 
 	var result openAIResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
+		return LLMResponse{}, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if result.Error != nil {
-		return "", fmt.Errorf("API error: %s", result.Error.Message)
+		return LLMResponse{}, fmt.Errorf("API error: %s", result.Error.Message)
 	}
 	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("no choices in response")
+		return LLMResponse{}, fmt.Errorf("no choices in response")
 	}
 
-	return result.Choices[0].Message.Content, nil
+	msg := result.Choices[0].Message
+	return LLMResponse{
+		Content:          msg.Content,
+		ReasoningContent: msg.ReasoningContent,
+	}, nil
 }
 
 // ─── Anthropic format ───
 
 type anthropicRequest struct {
-	Model     string    `json:"model"`
-	System    string    `json:"system,omitempty"`
-	Messages  []Message `json:"messages"`
-	MaxTokens int       `json:"max_tokens"`
+	Model        string         `json:"model"`
+	System       string         `json:"system,omitempty"`
+	Messages     []Message      `json:"messages"`
+	MaxTokens    int            `json:"max_tokens"`
+	Thinking     *thinkingConfig `json:"thinking,omitempty"`
+	OutputConfig *outputConfig  `json:"output_config,omitempty"`
+}
+
+type outputConfig struct {
+	Effort string `json:"effort"`
 }
 
 type anthropicResponse struct {
 	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		Thinking string `json:"thinking"`
 	} `json:"content"`
 	Error *struct {
 		Message string `json:"message"`
@@ -153,7 +189,7 @@ type anthropicResponse struct {
 	} `json:"error"`
 }
 
-func generateTextAnthropic(cfg LLMConfig, messages []Message) (string, error) {
+func generateTextAnthropic(cfg LLMConfig, messages []Message) (LLMResponse, error) {
 	url := fmt.Sprintf("%s/messages", normalizeBaseURL(cfg.BaseURL))
 
 	// Anthropic expects the system prompt in a top-level "system" field,
@@ -171,19 +207,27 @@ func generateTextAnthropic(cfg LLMConfig, messages []Message) (string, error) {
 		filtered = append(filtered, m)
 	}
 
-	body, err := json.Marshal(anthropicRequest{
+	reqBody := anthropicRequest{
 		Model:     cfg.ModelName,
 		System:    system,
 		Messages:  filtered,
 		MaxTokens: 4096,
-	})
+	}
+	if cfg.ThinkingType != "" {
+		reqBody.Thinking = &thinkingConfig{Type: cfg.ThinkingType}
+	}
+	if cfg.ReasoningEffort != "" {
+		reqBody.OutputConfig = &outputConfig{Effort: cfg.ReasoningEffort}
+	}
+
+	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return LLMResponse{}, err
 	}
 
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return LLMResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", cfg.APIKey)
@@ -191,21 +235,36 @@ func generateTextAnthropic(cfg LLMConfig, messages []Message) (string, error) {
 
 	resp, err := doRequest(req)
 	if err != nil {
-		return "", err
+		return LLMResponse{}, err
 	}
 
 	var result anthropicResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
+		return LLMResponse{}, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if result.Error != nil {
-		return "", fmt.Errorf("API error (%s): %s", result.Error.Type, result.Error.Message)
+		return LLMResponse{}, fmt.Errorf("API error (%s): %s", result.Error.Type, result.Error.Message)
 	}
 	if len(result.Content) == 0 {
-		return "", fmt.Errorf("no content in response")
+		return LLMResponse{}, fmt.Errorf("no content in response")
 	}
 
-	return result.Content[0].Text, nil
+	var llmResp LLMResponse
+	for _, block := range result.Content {
+		switch block.Type {
+		case "thinking":
+			if llmResp.ReasoningContent != "" {
+				llmResp.ReasoningContent += "\n"
+			}
+			llmResp.ReasoningContent += block.Thinking
+		case "text":
+			if llmResp.Content != "" {
+				llmResp.Content += "\n"
+			}
+			llmResp.Content += block.Text
+		}
+	}
+	return llmResp, nil
 }
 
 // normalizeBaseURL ensures the base URL has a scheme (https by default).

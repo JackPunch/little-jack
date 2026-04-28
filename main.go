@@ -31,5 +31,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to generate text: %v", err)
 	}
-	fmt.Println("AI:", resp)
+	if resp.ReasoningContent != "" {
+		fmt.Println("Reasoning:", resp.ReasoningContent)
+		fmt.Println("---")
+	}
+	fmt.Println("AI:", resp.Content)
 }
