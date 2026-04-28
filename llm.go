@@ -291,7 +291,7 @@ func doRequest(req *http.Request, debug bool) ([]byte, error) {
 			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 			fmt.Fprintf(os.Stderr, "Body:\n%s\n", string(bodyBytes))
 		}
-		fmt.Fprintf(os.Stderr, "===================\n")
+		fmt.Fprintf(os.Stderr, "===================\n\n")
 	}
 
 	client := &http.Client{Timeout: 120 * time.Second}

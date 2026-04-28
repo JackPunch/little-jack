@@ -35,6 +35,7 @@ func main() {
 	}
 	if !cfg.DebugMode {
 		if resp.ReasoningContent != "" {
+			fmt.Println("\n---")
 			fmt.Println("Reasoning:", resp.ReasoningContent)
 			fmt.Println("---")
 		}
