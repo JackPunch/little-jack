@@ -1,6 +1,3 @@
-<!-- From: C:\Users\Administrator\workSpace\little-jack\AGENTS.md -->
-<!-- From: /Users/jackpunch/WorkSpace/little-jack/AGENTS.md -->
-
 # AGENTS.md — little-jack
 
 > This file is for AI coding agents. It describes the project architecture, conventions, and workflows. All comments and documentation in the codebase are written in English, with the exception of `README.md` which contains brief Chinese notes about the test environment.
@@ -33,7 +30,10 @@ The program reads configuration from environment variables (optionally seeded fr
 ├── go.mod          # Go module definition
 ├── main.go         # Entry point: loads config, reads CLI arg, calls LLM agent
 ├── env.go          # Custom `.env` file loader (no external libraries)
-├── llm.go          # LLM API client: config, OpenAI request/response, streaming
+├── llm_types.go    # Shared types: LLMConfig, Message, LLMResponse, StreamReader, OpenAI structs
+├── llm_generate.go # Non-streaming API client: GenerateText, CreateAgent, CreateStreamingAgent
+├── llm_stream.go   # Streaming API client: GenerateTextStream with SSE parsing
+├── llm_http.go     # HTTP helpers: doRequest, writeDebugBody, writeDebugSSE
 ├── .env.example    # Example environment variables
 ├── .env            # Local environment file (gitignored, may contain real secrets)
 ├── .gitignore      # Ignores .env, build artifacts, coverage, editor files
@@ -63,7 +63,7 @@ The application expects the following environment variables at runtime:
 `env.go` contains a lightweight loader that searches for `.env` in two locations:
 
 1. Directory of the running executable
-2. Directory of the source file (useful during `go run`)
+2. Directory of this source file (useful during `go run`)
 
 **Note:** The doc comment in `env.go` mentions a third search location (current working directory), but the implementation does **not** include it. The actual search order is executable directory first, then source file directory.
 
@@ -93,7 +93,7 @@ No Makefile, build scripts, or CI/CD pipelines exist in the repository.
 - Follow standard Go formatting (`gofmt`).
 - Keep everything in `package main`; do not introduce sub-packages unless the project grows significantly.
 - Use exported names (`PascalCase`) only for entities that need to be accessed across files. Currently all cross-file functions and types are exported (e.g., `LoadDotEnv`, `LoadConfigFromEnv`, `GenerateText`, `CreateAgent`, `CreateStreamingAgent`).
-- Group related code with comment separators (see `llm.go` for the `// ─── OpenAI format ───` style).
+- Group related code with comment separators (see `llm_types.go` for the `// ─── OpenAI format ───` style).
 - Prefer the standard library over third-party dependencies.
 
 ---
@@ -131,11 +131,12 @@ Because the LLM client makes real HTTP calls, consider adding interfaces around 
 
 ## Runtime Architecture
 
-1. `main()` calls `LoadDotEnv(".env")` to optionally load local environment variables, then calls `LoadConfigFromEnv()` (defined in `main.go`) to read all env vars and construct an `LLMConfig`. The LLM layer (`llm.go`) does not read environment variables.
+1. `main()` calls `LoadDotEnv(".env")` to optionally load local environment variables, then calls `LoadConfigFromEnv()` (defined in `main.go`) to read all env vars and construct an `LLMConfig`. The LLM layer does not read environment variables directly.
 2. The prompt is taken from `os.Args[1]` or falls back to a hardcoded greeting (`"Hello, introduce yourself in one sentence."`).
-3. `main` decides which factory to use based on its own logic (e.g. checking `LLM_STREAM`). `CreateAgent(cfg, systemPrompt...)` returns a non-streaming function that builds a message slice and delegates to `GenerateText(cfg, messages)`. `CreateStreamingAgent(cfg, systemPrompt...)` returns a streaming variant that delegates to `GenerateTextStream(cfg, messages)`, returning a `*StreamReader`. Thinking controls are passed through `cfg.ThinkingType` and `cfg.ReasoningEffort`.
-4. `GenerateText` calls the OpenAI-compatible API endpoint (`/chat/completions`) in non-streaming mode. `GenerateTextStream` opens an SSE connection and returns a `*StreamReader` that yields individual `StreamChunk` values via its `ReadChunk` method. Each chunk carries both `Content` and `ReasoningContent` deltas, and the caller is responsible for aggregating and printing them. The aggregated response is also available through `Result()` after the stream is consumed. Both functions respect `cfg.DebugOutput` for request/response logging.
-5. The HTTP helper (`doRequest`) uses a 120-second timeout and returns non-200 status codes as errors. When a non-nil `debugOut` is provided, it writes the full request and response bodies to that writer.
+3. `main` decides which factory to use based on its own logic (checking `LLM_STREAM`). `CreateAgent(cfg, systemPrompt...)` returns a non-streaming function that builds a message slice and delegates to `GenerateText(cfg, messages)`. `CreateStreamingAgent(cfg, systemPrompt...)` returns a streaming variant that delegates to `GenerateTextStream(cfg, messages)`, returning a `*StreamReader`. Thinking controls are passed through `cfg.ThinkingType` and `cfg.ReasoningEffort`.
+4. `GenerateText` (in `llm_generate.go`) calls the OpenAI-compatible API endpoint (`/chat/completions`) in non-streaming mode. `GenerateTextStream` (in `llm_stream.go`) opens an SSE connection and returns a `*StreamReader` that yields individual `StreamChunk` values via its `ReadChunk` method. Each chunk carries both `Content` and `ReasoningContent` deltas, and the caller is responsible for aggregating and printing them. The aggregated response is also available through `Result()` after the stream is consumed. Both functions respect `cfg.DebugOutput` for request/response logging.
+5. The HTTP helper (`doRequest` in `llm_http.go`) uses a 120-second timeout and returns non-200 status codes as errors. When a non-nil `debugOut` is provided, it writes the full request and response bodies to that writer.
+6. `llm_types.go` defines all shared data structures: `LLMConfig`, `Message`, `LLMResponse`, `StreamChunk`, `StreamReader`, and the internal OpenAI request/response types. `StreamReader` manages a background goroutine that parses SSE lines and aggregates chunks.
 
 ---
 
