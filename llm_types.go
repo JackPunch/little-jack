@@ -13,14 +13,17 @@ type LLMConfig struct {
 	APIKey          string
 	ThinkingType    string    // enabled/disabled
 	ReasoningEffort string    // low/medium/high/max
+	ToolsEnabled    bool      // enable tool calling
 	DebugOutput     io.Writer // non-nil enables HTTP request/response logging
 }
 
 // Message represents a chat message.
 type Message struct {
-	Role             string `json:"role"`
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content,omitempty"`
+	Role             string     `json:"role"`
+	Content          string     `json:"content"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
 }
 
 // LLMResponse holds both the final answer and the reasoning chain.
@@ -51,6 +54,7 @@ type StreamReader struct {
 type openAIRequest struct {
 	Model           string          `json:"model"`
 	Messages        []Message       `json:"messages"`
+	Tools           []Tool          `json:"tools,omitempty"`
 	Thinking        *thinkingConfig `json:"thinking,omitempty"`
 	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
 	Stream          bool            `json:"stream"`
@@ -72,10 +76,49 @@ type openAIStreamResponse struct {
 
 type openAIResponse struct {
 	Choices []struct {
-		Message Message `json:"message"`
+		Message      Message `json:"message"`
+		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+// ─── Tool Calling ───
+
+// Tool describes a function that the model may call.
+type Tool struct {
+	Type     string   `json:"type"`
+	Function Function `json:"function"`
+}
+
+// Function describes the signature of a callable tool.
+type Function struct {
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Parameters  Parameters `json:"parameters"`
+}
+
+// Parameters describes the JSON Schema for a function's arguments.
+type Parameters struct {
+	Type       string              `json:"type"`
+	Properties map[string]Property `json:"properties"`
+	Required   []string            `json:"required,omitempty"`
+}
+
+// Property describes a single parameter field.
+type Property struct {
+	Type        string `json:"type"`
+	Description string `json:"description"`
+}
+
+// ToolCall represents a single tool invocation requested by the model.
+type ToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
 }
 

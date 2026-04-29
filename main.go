@@ -33,8 +33,32 @@ func main() {
 	}
 
 	systemPrompt := "You are a helpful assistant."
+	if cfg.ToolsEnabled {
+		systemPrompt = "You are a helpful assistant with access to tools. When you need more information, clarification, or confirmation from the user to complete a task, use the ask_user tool instead of guessing or making assumptions. After receiving the user's answer, proceed to complete the task."
+	}
 
-	if stream {
+	if cfg.ToolsEnabled {
+		if stream && !debugMode {
+			fmt.Println("[Note: tool calling forces non-streaming mode]")
+		}
+
+		registry := NewToolRegistry()
+		registry.Register(AskUserTool(), AskUserHandler)
+
+		agent := CreateToolAgent(cfg, registry, systemPrompt)
+		resp, err := agent(prompt)
+		if err != nil {
+			log.Fatalf("Failed to generate text: %v", err)
+		}
+		if !debugMode {
+			if resp.ReasoningContent != "" {
+				fmt.Println("\n---")
+				fmt.Println("Reasoning:", resp.ReasoningContent)
+				fmt.Println("---")
+			}
+			fmt.Println("AI:", resp.Content)
+		}
+	} else if stream {
 		streamAgent := CreateStreamingAgent(cfg, systemPrompt)
 		reader, err := streamAgent(prompt)
 		if err != nil {
@@ -115,6 +139,7 @@ func LoadConfigFromEnv() (LLMConfig, error) {
 		APIKey:          os.Getenv("LLM_API_KEY"),
 		ThinkingType:    os.Getenv("LLM_THINKING_TYPE"),
 		ReasoningEffort: os.Getenv("LLM_REASONING_EFFORT"),
+		ToolsEnabled:    parseBool(os.Getenv("LLM_TOOLS")),
 	}
 
 	if parseBool(os.Getenv("LLM_DEBUG")) {
