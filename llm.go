@@ -15,8 +15,8 @@ import (
 // LLMConfig holds the configuration for the LLM API client.
 // This client uses the OpenAI-compatible API format.
 type LLMConfig struct {
-	BaseURL         string    // e.g., "api.openai.com/v1"
-	ModelName       string    // e.g., "gpt-4o"
+	BaseURL         string // e.g., "api.openai.com/v1"
+	ModelName       string // e.g., "gpt-4o"
 	APIKey          string
 	ThinkingType    string    // enabled/disabled
 	ReasoningEffort string    // low/medium/high/max
@@ -219,6 +219,34 @@ func normalizeBaseURL(base string) string {
 
 // ─── HTTP helper ───
 
+// writeDebugBody writes a payload to debug output. If it is valid JSON,
+// it is indented for readability; otherwise it is written as-is.
+func writeDebugBody(w io.Writer, body []byte) {
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, body, "", "  "); err == nil {
+		fmt.Fprintf(w, "%s\n", buf.String())
+	} else {
+		fmt.Fprintf(w, "%s\n", string(body))
+	}
+}
+
+// writeDebugSSE writes an SSE data line to debug output. If the payload
+// after "data: " is valid JSON, it prints "data:" on its own line followed
+// by the indented JSON; otherwise it writes the line as-is.
+func writeDebugSSE(w io.Writer, line string) {
+	data := strings.TrimPrefix(line, "data: ")
+	if data == line { // not a data: line
+		fmt.Fprintf(w, "%s", line)
+		return
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, []byte(data), "", "  "); err == nil {
+		fmt.Fprintf(w, "data:\n%s\n", buf.String())
+	} else {
+		fmt.Fprintf(w, "%s", line)
+	}
+}
+
 func doRequest(req *http.Request, debugOut io.Writer) ([]byte, error) {
 	if debugOut != nil {
 		fmt.Fprintf(debugOut, "=== API Request ===\n")
@@ -229,7 +257,8 @@ func doRequest(req *http.Request, debugOut io.Writer) ([]byte, error) {
 		if req.Body != nil {
 			bodyBytes, _ := io.ReadAll(req.Body)
 			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			fmt.Fprintf(debugOut, "Body:\n%s\n", string(bodyBytes))
+			fmt.Fprintln(debugOut, "Body:")
+			writeDebugBody(debugOut, bodyBytes)
 		}
 		fmt.Fprintf(debugOut, "===================\n\n")
 	}
@@ -252,7 +281,8 @@ func doRequest(req *http.Request, debugOut io.Writer) ([]byte, error) {
 		for k, v := range resp.Header {
 			fmt.Fprintf(debugOut, "Header: %s: %s\n", k, strings.Join(v, ", "))
 		}
-		fmt.Fprintf(debugOut, "Body:\n%s\n", string(body))
+		fmt.Fprintln(debugOut, "Body:")
+		writeDebugBody(debugOut, body)
 		fmt.Fprintf(debugOut, "====================\n")
 	}
 
@@ -301,7 +331,8 @@ func GenerateTextStream(cfg LLMConfig, messages []Message) (*StreamReader, error
 		for k, v := range req.Header {
 			fmt.Fprintf(cfg.DebugOutput, "Header: %s: %s\n", k, strings.Join(v, ", "))
 		}
-		fmt.Fprintf(cfg.DebugOutput, "Body:\n%s\n", string(body))
+		fmt.Fprintln(cfg.DebugOutput, "Body:")
+		writeDebugBody(cfg.DebugOutput, body)
 		fmt.Fprintf(cfg.DebugOutput, "===================\n\n")
 	}
 
@@ -315,7 +346,10 @@ func GenerateTextStream(cfg LLMConfig, messages []Message) (*StreamReader, error
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if cfg.DebugOutput != nil {
-			fmt.Fprintf(cfg.DebugOutput, "=== API Response ===\nStatus: %s\nBody:\n%s\n====================\n", resp.Status, string(bodyBytes))
+			fmt.Fprintf(cfg.DebugOutput, "=== API Response ===\nStatus: %s\n", resp.Status)
+			fmt.Fprintln(cfg.DebugOutput, "Body:")
+			writeDebugBody(cfg.DebugOutput, bodyBytes)
+			fmt.Fprintln(cfg.DebugOutput, "====================")
 		}
 		return nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(bodyBytes))
 	}
@@ -354,7 +388,7 @@ func GenerateTextStream(cfg LLMConfig, messages []Message) (*StreamReader, error
 			}
 
 			if cfg.DebugOutput != nil {
-				fmt.Fprintf(cfg.DebugOutput, "%s", line)
+				writeDebugSSE(cfg.DebugOutput, line)
 			}
 
 			line = strings.TrimSpace(line)
@@ -397,4 +431,3 @@ func GenerateTextStream(cfg LLMConfig, messages []Message) (*StreamReader, error
 		errCh:   errCh,
 	}, nil
 }
-
