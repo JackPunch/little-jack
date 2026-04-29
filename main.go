@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -26,9 +27,6 @@ func main() {
 
 	stream := parseBool(os.Getenv("LLM_STREAM"))
 	debugMode := cfg.DebugOutput != nil
-	if debugMode {
-		stream = false
-	}
 
 	if !debugMode {
 		fmt.Println("User:", prompt)
@@ -38,32 +36,57 @@ func main() {
 
 	if stream {
 		streamAgent := CreateStreamingAgent(cfg, systemPrompt)
-		var reasoningStarted, contentStarted bool
-		resp, err := streamAgent(prompt, func(chunk StreamChunk) {
-			if chunk.ReasoningContent != "" {
-				if !reasoningStarted {
-					fmt.Println("\n---")
-					fmt.Print("Reasoning: ")
-					reasoningStarted = true
-				}
-				fmt.Print(chunk.ReasoningContent)
-			}
-			if chunk.Content != "" {
-				if !contentStarted {
-					if reasoningStarted {
-						fmt.Println("\n---")
-					}
-					fmt.Print("AI: ")
-					contentStarted = true
-				}
-				fmt.Print(chunk.Content)
-			}
-		})
+		reader, err := streamAgent(prompt)
 		if err != nil {
 			log.Fatalf("Failed to generate text: %v", err)
 		}
-		if reasoningStarted || contentStarted {
+		defer reader.Close()
+
+		var contentBuilder, reasoningBuilder strings.Builder
+		var printedAI, printedReasoning bool
+
+		for {
+			chunk, err := reader.ReadChunk()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Fatalf("Stream read failed: %v", err)
+			}
+
+			if chunk.ReasoningContent != "" {
+				reasoningBuilder.WriteString(chunk.ReasoningContent)
+				if !debugMode && !printedReasoning {
+					fmt.Print("Reasoning: ")
+					printedReasoning = true
+				}
+				if !debugMode {
+					fmt.Print(chunk.ReasoningContent)
+				}
+			}
+
+			if chunk.Content != "" {
+				contentBuilder.WriteString(chunk.Content)
+				if !debugMode && !printedAI {
+					if printedReasoning {
+						fmt.Println()
+					}
+					fmt.Print("AI: ")
+					printedAI = true
+				}
+				if !debugMode {
+					fmt.Print(chunk.Content)
+				}
+			}
+		}
+
+		if !debugMode {
 			fmt.Println()
+		}
+
+		resp, err := reader.Result()
+		if err != nil {
+			log.Fatalf("Stream error: %v", err)
 		}
 		_ = resp
 	} else {

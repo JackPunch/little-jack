@@ -1,4 +1,6 @@
+<!-- From: C:\Users\Administrator\workSpace\little-jack\AGENTS.md -->
 <!-- From: /Users/jackpunch/WorkSpace/little-jack/AGENTS.md -->
+
 # AGENTS.md — little-jack
 
 > This file is for AI coding agents. It describes the project architecture, conventions, and workflows. All comments and documentation in the codebase are written in English, with the exception of `README.md` which contains brief Chinese notes about the test environment.
@@ -15,12 +17,12 @@ The program reads configuration from environment variables (optionally seeded fr
 
 ## Technology Stack
 
-| Item | Version / Details |
-|------|-------------------|
-| Language | Go 1.26.2 |
-| Module | `github.com/JackPunch/little-jack` |
+| Item         | Version / Details                                        |
+| ------------ | -------------------------------------------------------- |
+| Language     | Go 1.26.2                                                |
+| Module       | `github.com/JackPunch/little-jack`                       |
 | Dependencies | **None** — the project uses only the Go standard library |
-| Build target | Single executable (`package main`) |
+| Build target | Single executable (`package main`)                       |
 
 ---
 
@@ -29,7 +31,7 @@ The program reads configuration from environment variables (optionally seeded fr
 ```
 .
 ├── go.mod          # Go module definition
-├── main.go         # Entry point: loads config, reads CLI arg, calls LLM
+├── main.go         # Entry point: loads config, reads CLI arg, calls LLM agent
 ├── env.go          # Custom `.env` file loader (no external libraries)
 ├── llm.go          # LLM API client: config, OpenAI request/response, streaming
 ├── .env.example    # Example environment variables
@@ -47,18 +49,19 @@ All source files belong to `package main`. There are no sub-packages, no interna
 
 The application expects the following environment variables at runtime:
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `LLM_BASE_URL` | **Yes** | — | Base URL of the API (e.g., `api.openai.com/v1`). A scheme is optional; `https://` is added automatically if missing. |
-| `LLM_MODEL_NAME` | **Yes** | — | Model identifier (e.g., `gpt-4o`, `o3-mini`) |
-| `LLM_API_KEY` | **Yes** | — | API key for authentication |
-| `LLM_THINKING_TYPE` | No | — | Thinking mode switch. Valid values: `enabled`, `disabled` |
-| `LLM_REASONING_EFFORT` | No | — | Thinking intensity control. Valid values: `low`, `medium`, `high`, `max` |
-| `LLM_DEBUG` | No | `false` | Enables HTTP request/response logging. When set, `LoadConfigFromEnv` assigns `os.Stderr` to `cfg.DebugOutput`. Valid values: `true`, `1`, `yes`, `on`. |
-| `LLM_STREAM` | No | `false` | Whether to use streaming output in the demo `main`. Valid values: `true`, `1`, `yes`, `on`. **Always disabled when `LLM_DEBUG` is enabled.** This is read by `main`, not by the framework. |
+| Variable               | Required | Default | Description                                                                                                                                            |
+| ---------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `LLM_BASE_URL`         | **Yes**  | —       | Base URL of the API (e.g., `api.openai.com/v1`). A scheme is optional; `https://` is added automatically if missing.                                   |
+| `LLM_MODEL_NAME`       | **Yes**  | —       | Model identifier (e.g., `gpt-4o`, `o3-mini`)                                                                                                           |
+| `LLM_API_KEY`          | **Yes**  | —       | API key for authentication                                                                                                                             |
+| `LLM_THINKING_TYPE`    | No       | —       | Thinking mode switch. Valid values: `enabled`, `disabled`                                                                                              |
+| `LLM_REASONING_EFFORT` | No       | —       | Thinking intensity control. Valid values: `low`, `medium`, `high`, `max`                                                                               |
+| `LLM_DEBUG`            | No       | `false` | Enables HTTP request/response logging. When set, `LoadConfigFromEnv` assigns `os.Stderr` to `cfg.DebugOutput`. Valid values: `true`, `1`, `yes`, `on`. |
+| `LLM_STREAM`           | No       | `false` | Whether to use streaming output in `main`. Valid values: `true`, `1`, `yes`, `on`. This is read by `main`, not by the LLM framework.                   |
 
 `.env` File Support  
 `env.go` contains a lightweight loader that searches for `.env` in two locations:
+
 1. Directory of the running executable
 2. Directory of the source file (useful during `go run`)
 
@@ -72,7 +75,7 @@ It only sets a variable if it is **not already defined** in the process environm
 
 ```bash
 # Build the binary
-go build -o little-jack
+go build
 
 # Run directly (requires env vars or a .env file)
 go run .
@@ -89,7 +92,7 @@ No Makefile, build scripts, or CI/CD pipelines exist in the repository.
 
 - Follow standard Go formatting (`gofmt`).
 - Keep everything in `package main`; do not introduce sub-packages unless the project grows significantly.
-- Use exported names (`PascalCase`) only for entities that need to be accessed across files. Currently all cross-file functions and types are exported (e.g., `LoadDotEnv`, `LoadConfigFromEnv`, `GenerateText`, `CreateAgent`).
+- Use exported names (`PascalCase`) only for entities that need to be accessed across files. Currently all cross-file functions and types are exported (e.g., `LoadDotEnv`, `LoadConfigFromEnv`, `GenerateText`, `CreateAgent`, `CreateStreamingAgent`).
 - Group related code with comment separators (see `llm.go` for the `// ─── OpenAI format ───` style).
 - Prefer the standard library over third-party dependencies.
 
@@ -128,10 +131,10 @@ Because the LLM client makes real HTTP calls, consider adding interfaces around 
 
 ## Runtime Architecture
 
-1. `main()` calls `LoadDotEnv(".env")` to optionally load local environment variables, then calls `LoadConfigFromEnv()` to read all env vars and construct an `LLMConfig`. The LLM layer (`llm.go`) does not read environment variables.
+1. `main()` calls `LoadDotEnv(".env")` to optionally load local environment variables, then calls `LoadConfigFromEnv()` (defined in `main.go`) to read all env vars and construct an `LLMConfig`. The LLM layer (`llm.go`) does not read environment variables.
 2. The prompt is taken from `os.Args[1]` or falls back to a hardcoded greeting (`"Hello, introduce yourself in one sentence."`).
-3. `main` decides which factory to use based on its own logic (e.g. checking `LLM_STREAM`). `CreateAgent(cfg, systemPrompt...)` returns a non-streaming function that builds a message slice and delegates to `GenerateText(cfg, messages)`. `CreateStreamingAgent(cfg, systemPrompt...)` returns a streaming variant that delegates to `GenerateTextStream(cfg, messages, onChunk)`. Thinking controls are passed through `cfg.ThinkingType` and `cfg.ReasoningEffort`.
-4. `GenerateText` calls the OpenAI-compatible API endpoint (`/chat/completions`) in non-streaming mode. `GenerateTextStream` opens an SSE connection and invokes the caller-supplied `onChunk` callback for every token; it does **not** perform any IO itself. Both functions respect `cfg.DebugOutput` for request/response logging.
+3. `main` decides which factory to use based on its own logic (e.g. checking `LLM_STREAM`). `CreateAgent(cfg, systemPrompt...)` returns a non-streaming function that builds a message slice and delegates to `GenerateText(cfg, messages)`. `CreateStreamingAgent(cfg, systemPrompt...)` returns a streaming variant that delegates to `GenerateTextStream(cfg, messages)`, returning a `*StreamReader`. Thinking controls are passed through `cfg.ThinkingType` and `cfg.ReasoningEffort`.
+4. `GenerateText` calls the OpenAI-compatible API endpoint (`/chat/completions`) in non-streaming mode. `GenerateTextStream` opens an SSE connection and returns a `*StreamReader` that yields individual `StreamChunk` values via its `ReadChunk` method. Each chunk carries both `Content` and `ReasoningContent` deltas, and the caller is responsible for aggregating and printing them. The aggregated response is also available through `Result()` after the stream is consumed. Both functions respect `cfg.DebugOutput` for request/response logging.
 5. The HTTP helper (`doRequest`) uses a 120-second timeout and returns non-200 status codes as errors. When a non-nil `debugOut` is provided, it writes the full request and response bodies to that writer.
 
 ---
