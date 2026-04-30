@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strings"
 )
@@ -67,4 +68,25 @@ func main() {
 	}
 
 	// ==============================================
+	// 创建提示词
+	// ==============================================
+	systemPrompt := "You are a helpful assistant."
+	userPrompt := "What is the capital of France?"
+	if len(os.Args) > 1 && os.Args[1] != "" {
+		userPrompt = os.Args[1]
+	}
+	type Message struct {
+		role string
+		content string
+	}
+	messages := []Message{
+		{role: "system", content: systemPrompt},
+		{role: "user", content: userPrompt},
+	}
+
+	// ==============================================
+	// 创建请求
+	// ==============================================
+	fmt.Println(messages)
+
 }
