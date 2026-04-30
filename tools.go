@@ -70,8 +70,8 @@ func AskUserHandler(args json.RawMessage) (string, error) {
 // It reads a full line (spaces are preserved) and strips the trailing newline.
 // Writing to stderr ensures the prompt is visible even when stdout is piped.
 func AskUser(question string) (string, error) {
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "[Tool: ask_user]", question)
+	fmt.Fprintln(os.Stderr, "-----tool: ask_user-----")
+	fmt.Fprintln(os.Stderr, question)
 	fmt.Fprint(os.Stderr, "> ")
 	// Flush stderr so the prompt appears immediately.
 	_ = os.Stderr.Sync()
@@ -88,7 +88,7 @@ func AskUser(question string) (string, error) {
 	answer = strings.TrimSuffix(answer, "\n")
 	answer = strings.TrimSuffix(answer, "\r")
 	answer = strings.TrimSpace(answer)
-	fmt.Fprintf(os.Stderr, "[Received input: %q]\n", answer)
+	fmt.Fprintf(os.Stderr, "------------------------\n\n")
 	return answer, nil
 }
 

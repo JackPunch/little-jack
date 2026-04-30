@@ -29,7 +29,7 @@ func main() {
 	debugMode := cfg.DebugOutput != nil
 
 	if !debugMode {
-		fmt.Println("User:", prompt)
+		fmt.Printf("user:\n%s\n\n", prompt)
 	}
 
 	systemPrompt := "You are a helpful assistant."
@@ -82,23 +82,33 @@ func runToolAgent(cfg LLMConfig, prompt, systemPrompt string, debugMode bool) er
 
 		switch turn.Role {
 		case "assistant":
+			fmt.Println("assistant:")
 			if turn.ReasoningContent != "" {
-				fmt.Println("\n---")
-				fmt.Println("Reasoning:", turn.ReasoningContent)
-				fmt.Println("---")
+				fmt.Println("-----reasoning-----")
+				fmt.Println(turn.ReasoningContent)
+				fmt.Println("-------------------")
+				fmt.Println()
 			}
 			if turn.Content != "" {
-				fmt.Println("AI:", turn.Content)
+				fmt.Println("-----content-------")
+				fmt.Println(turn.Content)
+				fmt.Println("-------------------")
+				fmt.Println()
 			}
-			for _, tc := range turn.ToolCalls {
-				fmt.Printf("[Calling tool: %s]\n", tc.Function.Name)
+			if len(turn.ToolCalls) > 0 {
+				fmt.Println("-----tool-call-----")
+				for _, tc := range turn.ToolCalls {
+					fmt.Printf("%s: %s\n", tc.Function.Name, tc.Function.Arguments)
+				}
+				fmt.Println("-------------------")
+				fmt.Println()
 			}
 			// Only signal the goroutine if there are more turns ahead.
 			if !turn.IsFinal {
 				reader.ackCh <- struct{}{}
 			}
 		case "tool":
-			fmt.Printf("[Tool result: %s] %s\n", turn.ToolName, turn.Content)
+			fmt.Printf("tool_result:\n%s\n\n", turn.Content)
 		}
 	}
 
@@ -116,7 +126,8 @@ func runStreamAgent(cfg LLMConfig, prompt, systemPrompt string, debugMode bool) 
 	defer reader.Close()
 
 	var contentBuilder, reasoningBuilder strings.Builder
-	var printedAI, printedReasoning bool
+	var printedHeader, printedReasoning, printedContent bool
+	var reasoningClosed bool
 
 	for {
 		chunk, err := reader.ReadChunk()
@@ -128,33 +139,45 @@ func runStreamAgent(cfg LLMConfig, prompt, systemPrompt string, debugMode bool) 
 		}
 
 		if chunk.ReasoningContent != "" {
-			reasoningBuilder.WriteString(chunk.ReasoningContent)
-			if !debugMode && !printedReasoning {
-				fmt.Print("Reasoning: ")
-				printedReasoning = true
-			}
 			if !debugMode {
+				if !printedHeader {
+					fmt.Println("assistant:")
+					printedHeader = true
+				}
+				if !printedReasoning {
+					fmt.Println("-----reasoning-----")
+					printedReasoning = true
+				}
 				fmt.Print(chunk.ReasoningContent)
 			}
+			reasoningBuilder.WriteString(chunk.ReasoningContent)
 		}
 
 		if chunk.Content != "" {
-			contentBuilder.WriteString(chunk.Content)
-			if !debugMode && !printedAI {
-				if printedReasoning {
-					fmt.Println()
-				}
-				fmt.Print("AI: ")
-				printedAI = true
-			}
 			if !debugMode {
+				if !printedHeader {
+					fmt.Println("assistant:")
+					printedHeader = true
+				}
+				if printedReasoning && !reasoningClosed {
+					fmt.Println()
+					fmt.Println("-------------------")
+					fmt.Println()
+					reasoningClosed = true
+				}
+				if !printedContent {
+					fmt.Println("-----content-------")
+					printedContent = true
+				}
 				fmt.Print(chunk.Content)
 			}
+			contentBuilder.WriteString(chunk.Content)
 		}
 	}
 
-	if !debugMode {
+	if !debugMode && (printedReasoning || printedContent) {
 		fmt.Println()
+		fmt.Println("-------------------")
 	}
 
 	_, err = reader.Result()
@@ -173,12 +196,18 @@ func runNormalAgent(cfg LLMConfig, prompt, systemPrompt string, debugMode bool) 
 		return nil
 	}
 
+	fmt.Println("assistant:")
 	if resp.ReasoningContent != "" {
-		fmt.Println("\n---")
-		fmt.Println("Reasoning:", resp.ReasoningContent)
-		fmt.Println("---")
+		fmt.Println("-----reasoning-----")
+		fmt.Println(resp.ReasoningContent)
+		fmt.Println("-------------------")
+		fmt.Println()
 	}
-	fmt.Println("AI:", resp.Content)
+	if resp.Content != "" {
+		fmt.Println("-----content-------")
+		fmt.Println(resp.Content)
+		fmt.Println("-------------------")
+	}
 	return nil
 }
 
