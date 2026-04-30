@@ -447,7 +447,9 @@ func CreateToolAgent(cfg LLMConfig, registry *ToolRegistry, systemPrompt ...stri
 				}
 
 				// Wait for the caller to finish printing before executing tools.
-				<-ackCh
+				if cfg.DebugOutput == nil {
+					<-ackCh
+				}
 
 				// Execute every tool call requested by the model.
 				for _, tc := range assistantMsg.ToolCalls {
