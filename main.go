@@ -2,9 +2,12 @@ package main
 
 import (
 	"bufio"
-	"fmt"
+	"bytes"
+	"encoding/json"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -76,17 +79,80 @@ func main() {
 		userPrompt = os.Args[1]
 	}
 	type Message struct {
-		role string
-		content string
+		Role             string `json:"role"`
+		Content          string `json:"content"`
+		ReasoningContent string `json:"reasoning_content,omitempty"`
+		ToolCallId       string `json:"tool_call_id,omitempty"`
 	}
 	messages := []Message{
-		{role: "system", content: systemPrompt},
-		{role: "user", content: userPrompt},
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
 	}
 
 	// ==============================================
 	// 创建请求
 	// ==============================================
-	fmt.Println(messages)
+	client := &http.Client{
+		Timeout: 150 * time.Second,
+	}
+
+	type RequestBody struct {
+		Messages []Message `json:"messages"`
+		Model    string    `json:"model"`
+		Thinking struct {
+			Type string `json:"type"`
+		} `json:"thinking,omitempty"`
+		ReasoningEffort string `json:"reasoning_effort,omitempty"`
+		Stream          bool   `json:"stream,omitempty"`
+		Tools           string `json:"tools,omitempty"` // 暂不支持，占位
+	}
+	var thinkingType string
+	if config.Thinking {
+		thinkingType = "enabled"
+	} else {
+		thinkingType = "disabled"
+	}
+
+	body := RequestBody{
+		Messages: messages,
+		Model:    config.ModelName,
+		Thinking: struct {
+			Type string `json:"type"`
+		}{Type: thinkingType},
+		ReasoningEffort: config.ReasoningEffort,
+		Stream:          config.Stream,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		panic(err)
+	}
+
+	url := config.BaseUrl + "/chat/completions"
+	req, err := http.NewRequest(
+		"POST",
+		url,
+		bytes.NewReader(jsonBody),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+config.ApiKey)
+
+	// ==============================================
+	// 发送请求
+	// ==============================================
+	resp, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	// ==============================================
+	// 解析响应
+	// ==============================================
 
 }
