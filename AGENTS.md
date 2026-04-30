@@ -1,4 +1,4 @@
-# AGENTS.md — little-jack
+<!-- AGENTS.md — little-jack -->
 
 > This file is for AI coding agents. It describes the project architecture, conventions, and workflows. All comments and documentation in the codebase are written in English, with the exception of `README.md` and the header comment block in `tools.go`, both of which contain brief Chinese notes.
 
@@ -35,9 +35,7 @@ The program reads configuration from environment variables (optionally seeded fr
 ├── main.go          # Entry point: loads config, reads CLI arg, dispatches agent mode
 ├── env.go           # Custom `.env` file loader (no external libraries)
 ├── llm_types.go     # Shared types: LLMConfig, Message, LLMResponse, StreamReader, ToolCallReader, OpenAI structs, tool schemas
-├── llm_generate.go  # Non-streaming API client: GenerateText, CreateAgent, CreateStreamingAgent, CreateToolAgent
-├── llm_stream.go    # Streaming API client: GenerateTextStream with SSE parsing
-├── llm_http.go      # HTTP helpers: doRequest, writeDebugBody, writeDebugSSE, normalizeBaseURL
+├── llm_generate.go  # HTTP helpers, non-streaming API client, streaming API client, agent constructors, and reader methods
 ├── tools.go         # Tool definitions and handlers (e.g., ask_user)
 ├── tool_registry.go # ToolRegistry: registers tools, dispatches tool execution
 ├── .env.example     # Example environment variables
@@ -48,6 +46,15 @@ The program reads configuration from environment variables (optionally seeded fr
 ```
 
 All source files belong to `package main`. There are no sub-packages, no internal packages, and no generated code.
+
+### File Responsibilities
+
+- **`main.go`** — `main()`, `LoadConfigFromEnv()`, `parseBool()`, and the three runner functions (`runNormalAgent`, `runStreamAgent`, `runToolAgent`).
+- **`env.go`** — `LoadDotEnv()` and `loadDotEnvFile()`. Searches for `.env` in the directory of the executable first, then the directory of the source file (useful during `go run`).
+- **`llm_types.go`** — All shared data structures: `LLMConfig`, `Message`, `LLMResponse`, `StreamChunk`, `StreamReader`, `ToolCallReader`, `Turn`, `Tool`, `Function`, `Parameters`, `Property`, `ToolCall`, and the internal OpenAI request/response types.
+- **`llm_generate.go`** — HTTP helpers (`normalizeBaseURL`, `doRequest`, `writeDebugBody`, `writeDebugSSE`), non-streaming client (`GenerateText`, `generateRaw`), streaming client (`GenerateTextStream`), agent constructors (`CreateAgent`, `CreateStreamingAgent`, `CreateToolAgent`), and the methods for `StreamReader` (`ReadChunk`, `Result`, `Close`) and `ToolCallReader` (`ReadTurn`, `Result`, `Close`).
+- **`tools.go`** — Tool definitions, handlers, and business logic. Currently contains `AskUserTool()`, `AskUserHandler()`, and `AskUser()`.
+- **`tool_registry.go`** — `ToolRegistry` struct with `Register`, `Tools`, and `Execute` methods.
 
 ---
 
@@ -71,8 +78,6 @@ The application expects the following environment variables at runtime:
 
 1. Directory of the running executable
 2. Directory of this source file (useful during `go run`)
-
-**Note:** The doc comment in `env.go` mentions a third search location (current working directory), but the implementation does **not** include it. The actual search order is executable directory first, then source file directory.
 
 It only sets a variable if it is **not already defined** in the process environment (checked via `os.Getenv`), so explicit exports always take precedence. The loader does not support multi-line values or complex escaping; it trims surrounding quotes (`"` and `'`) from values.
 
@@ -129,8 +134,8 @@ Then register the tool and its handler in `main.go` inside `runToolAgent` via `r
 4. `CreateAgent(cfg, systemPrompt...)` returns a non-streaming function that builds a message slice and delegates to `GenerateText(cfg, messages)`.
 5. `CreateStreamingAgent(cfg, systemPrompt...)` returns a streaming variant that delegates to `GenerateTextStream(cfg, messages)`, returning a `*StreamReader`. The reader yields individual `StreamChunk` values via `ReadChunk`, and the aggregated response is available through `Result()` after the stream is consumed.
 6. `CreateToolAgent(cfg, registry, systemPrompt...)` returns a function that performs multi-turn tool calling. It returns a `*ToolCallReader` that yields `Turn` values via `ReadTurn`. Each assistant turn may contain `Content`, `ReasoningContent`, and `ToolCalls`. The caller must acknowledge non-final turns by sending on `reader.ackCh` so the agent can execute tools and continue. Reasoning content is preserved and replayed verbatim on every turn (required by DeepSeek's API).
-7. `GenerateText` (in `llm_generate.go`) calls the OpenAI-compatible API endpoint (`/chat/completions`) in non-streaming mode. `GenerateTextStream` (in `llm_stream.go`) opens an SSE connection and returns a `*StreamReader` that parses SSE lines in a background goroutine. Both functions respect `cfg.DebugOutput` for request/response logging.
-8. The HTTP helper (`doRequest` in `llm_http.go`) uses a 120-second timeout and returns non-200 status codes as errors. When a non-nil `debugOut` is provided, it writes the full request and response bodies to that writer.
+7. `GenerateText` calls the OpenAI-compatible API endpoint (`/chat/completions`) in non-streaming mode. `GenerateTextStream` opens an SSE connection and returns a `*StreamReader` that parses SSE lines in a background goroutine. Both functions respect `cfg.DebugOutput` for request/response logging.
+8. The HTTP helper (`doRequest` in `llm_generate.go`) uses a 120-second timeout and returns non-200 status codes as errors. When a non-nil `debugOut` is provided, it writes the full request and response bodies to that writer.
 9. `llm_types.go` defines all shared data structures: `LLMConfig`, `Message`, `LLMResponse`, `StreamChunk`, `StreamReader`, `ToolCallReader`, `Turn`, `Tool`, `Function`, `Parameters`, `Property`, `ToolCall`, and the internal OpenAI request/response types.
 
 ---

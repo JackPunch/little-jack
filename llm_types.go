@@ -5,6 +5,8 @@ import (
 	"sync"
 )
 
+// ─── Configuration ───
+
 // LLMConfig holds the configuration for the LLM API client.
 // This client uses the OpenAI-compatible API format.
 type LLMConfig struct {
@@ -16,6 +18,8 @@ type LLMConfig struct {
 	ToolsEnabled    bool      // enable tool calling
 	DebugOutput     io.Writer // non-nil enables HTTP request/response logging
 }
+
+// ─── Core Types ───
 
 // Message represents a chat message.
 type Message struct {
@@ -31,6 +35,8 @@ type LLMResponse struct {
 	Content          string
 	ReasoningContent string
 }
+
+// ─── Streaming ───
 
 // StreamChunk represents a piece of the streaming response.
 type StreamChunk struct {
@@ -49,8 +55,9 @@ type StreamReader struct {
 	result  LLMResponse
 }
 
-// ─── OpenAI format ───
+// ─── OpenAI Format ───
 
+// openAIRequest is the request body sent to the OpenAI-compatible API.
 type openAIRequest struct {
 	Model           string          `json:"model"`
 	Messages        []Message       `json:"messages"`
@@ -60,10 +67,12 @@ type openAIRequest struct {
 	Stream          bool            `json:"stream"`
 }
 
+// thinkingConfig controls whether the model shows its reasoning.
 type thinkingConfig struct {
 	Type string `json:"type"`
 }
 
+// openAIStreamResponse is the SSE response format for streaming requests.
 type openAIStreamResponse struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`
@@ -74,6 +83,7 @@ type openAIStreamResponse struct {
 	} `json:"choices"`
 }
 
+// openAIResponse is the non-streaming response format.
 type openAIResponse struct {
 	Choices []struct {
 		Message      Message `json:"message"`

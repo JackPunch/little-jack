@@ -10,9 +10,8 @@ import (
 
 // LoadDotEnv searches for a .env file in multiple locations and loads it.
 // Search order:
-//  1. Current working directory
-//  2. Directory of the executable
-//  3. Directory of this source file (useful for "go run")
+//  1. Directory of the executable
+//  2. Directory of this source file (useful for "go run")
 func LoadDotEnv(filename string) error {
 	if filename == "" {
 		filename = ".env"
