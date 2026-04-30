@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -101,15 +102,17 @@ func CreateStreamingAgent(cfg LLMConfig, systemPrompt ...string) func(string) (*
 	}
 }
 
-// CreateToolAgent creates a non-streaming agent that supports tool calling.
-// It runs a loop: sends the prompt (with available tools), checks if the model
-// wants to call tools, executes them, and sends the results back until the
-// model produces a final answer.
+// CreateToolAgent creates a reusable agent that supports multi-turn tool calling.
+// The returned function accepts a user prompt and returns a ToolCallReader
+// that yields one assistant turn at a time.
+//
+// The caller is responsible for consuming all turns (via ReadTurn) and for
+// all console output. The agent layer performs no direct I/O.
 //
 // Reasoning content is preserved and re-sent on every turn, which is required
 // by DeepSeek's API.
-func CreateToolAgent(cfg LLMConfig, registry *ToolRegistry, systemPrompt ...string) func(string) (LLMResponse, error) {
-	return func(prompt string) (LLMResponse, error) {
+func CreateToolAgent(cfg LLMConfig, registry *ToolRegistry, systemPrompt ...string) func(string) (*ToolCallReader, error) {
+	return func(prompt string) (*ToolCallReader, error) {
 		messages := make([]Message, 0, len(systemPrompt)+1)
 		for _, sp := range systemPrompt {
 			if sp != "" {
@@ -118,51 +121,118 @@ func CreateToolAgent(cfg LLMConfig, registry *ToolRegistry, systemPrompt ...stri
 		}
 		messages = append(messages, Message{Role: "user", Content: prompt})
 
-		for {
-			result, err := generateRaw(cfg, messages, registry.Tools())
-			if err != nil {
-				return LLMResponse{}, err
-			}
+		turnCh := make(chan Turn)
+		ackCh := make(chan struct{})
+		errCh := make(chan error, 1)
 
-			choice := result.Choices[0]
-			assistantMsg := choice.Message
+		reader := &ToolCallReader{
+			turnCh: turnCh,
+			ackCh:  ackCh,
+			errCh:  errCh,
+		}
 
-			// Preserve the full assistant message (including reasoning_content
-			// and tool_calls) for the next API turn. DeepSeek requires
-			// reasoning_content to be replayed verbatim.
-			messages = append(messages, assistantMsg)
+		go func() {
+			defer close(turnCh)
+			var runErr error
+			defer func() {
+				errCh <- runErr
+				close(errCh)
+			}()
 
-			if choice.FinishReason == nil || *choice.FinishReason != "tool_calls" {
-				return LLMResponse{
-					Content:          assistantMsg.Content,
-					ReasoningContent: assistantMsg.ReasoningContent,
-				}, nil
-			}
-
-			// Print reasoning and content before calling tools.
-			if cfg.DebugOutput == nil {
-				if assistantMsg.ReasoningContent != "" {
-					fmt.Println("\n---")
-					fmt.Println("Reasoning:", assistantMsg.ReasoningContent)
-					fmt.Println("---")
-				}
-				if assistantMsg.Content != "" {
-					fmt.Println("AI:", assistantMsg.Content)
-				}
-			}
-
-			// Execute every tool call requested by the model.
-			for _, tc := range assistantMsg.ToolCalls {
-				output, err := registry.Execute(tc)
+			for turnIndex := 0; ; turnIndex++ {
+				result, err := generateRaw(cfg, messages, registry.Tools())
 				if err != nil {
-					output = fmt.Sprintf("Error: %v", err)
+					runErr = err
+					return
 				}
-				messages = append(messages, Message{
-					Role:       "tool",
-					Content:    output,
-					ToolCallID: tc.ID,
-				})
+
+				choice := result.Choices[0]
+				assistantMsg := choice.Message
+
+				// Preserve the full assistant message (including reasoning_content
+				// and tool_calls) for the next API turn. DeepSeek requires
+				// reasoning_content to be replayed verbatim.
+				messages = append(messages, assistantMsg)
+
+				isFinal := choice.FinishReason == nil || *choice.FinishReason != "tool_calls"
+
+				turnCh <- Turn{
+					Role:             "assistant",
+					ReasoningContent: assistantMsg.ReasoningContent,
+					Content:          assistantMsg.Content,
+					ToolCalls:        assistantMsg.ToolCalls,
+					IsFinal:          isFinal,
+				}
+
+				if isFinal {
+					reader.result = LLMResponse{
+						Content:          assistantMsg.Content,
+						ReasoningContent: assistantMsg.ReasoningContent,
+					}
+					return
+				}
+
+				// Wait for the caller to finish printing before executing tools.
+				<-ackCh
+
+				// Execute every tool call requested by the model.
+				for _, tc := range assistantMsg.ToolCalls {
+					output, err := registry.Execute(tc)
+					if err != nil {
+						output = fmt.Sprintf("Error: %v", err)
+					}
+					turnCh <- Turn{
+						Role:       "tool",
+						Content:    output,
+						ToolCallID: tc.ID,
+						ToolName:   tc.Function.Name,
+					}
+					messages = append(messages, Message{
+						Role:       "tool",
+						Content:    output,
+						ToolCallID: tc.ID,
+					})
+				}
 			}
+		}()
+
+		return reader, nil
+	}
+}
+
+// ReadTurn returns the next turn from the tool-calling conversation.
+// When all turns are consumed, it returns io.EOF.
+func (r *ToolCallReader) ReadTurn() (Turn, error) {
+	turn, ok := <-r.turnCh
+	if !ok {
+		r.once.Do(func() {
+			r.err = <-r.errCh
+		})
+		if r.err != nil {
+			return Turn{}, r.err
+		}
+		return Turn{}, io.EOF
+	}
+	return turn, nil
+}
+
+// Result returns the final aggregated response after all turns are consumed.
+func (r *ToolCallReader) Result() (LLMResponse, error) {
+	for {
+		_, err := r.ReadTurn()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return r.result, err
 		}
 	}
+	return r.result, nil
+}
+
+// Close discards any unread turns.
+func (r *ToolCallReader) Close() error {
+	for range r.turnCh {
+	}
+	return nil
 }

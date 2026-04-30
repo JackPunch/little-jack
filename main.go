@@ -33,101 +33,153 @@ func main() {
 	}
 
 	systemPrompt := "You are a helpful assistant."
-	if cfg.ToolsEnabled {
-		systemPrompt = "You are a helpful assistant with access to tools. When you need more information, clarification, or confirmation from the user to complete a task, use the ask_user tool instead of guessing or making assumptions. After receiving the user's answer, proceed to complete the task."
-	}
 
-	if cfg.ToolsEnabled {
+	// ─── Mode Dispatch ───
+	// Tool mode takes priority. If tools are disabled, choose between
+	// streaming and non-streaming output.
+	var runErr error
+	switch {
+	case cfg.ToolsEnabled:
 		if stream && !debugMode {
 			fmt.Println("[Note: tool calling forces non-streaming mode]")
 		}
+		runErr = runToolAgent(cfg, prompt, systemPrompt, debugMode)
+	case stream:
+		runErr = runStreamAgent(cfg, prompt, systemPrompt, debugMode)
+	default:
+		runErr = runNormalAgent(cfg, prompt, systemPrompt, debugMode)
+	}
 
-		registry := NewToolRegistry()
-		registry.Register(AskUserTool(), AskUserHandler)
+	if runErr != nil {
+		log.Fatalf("Agent failed: %v", runErr)
+	}
+}
 
-		agent := CreateToolAgent(cfg, registry, systemPrompt)
-		resp, err := agent(prompt)
-		if err != nil {
-			log.Fatalf("Failed to generate text: %v", err)
+// runToolAgent runs the multi-turn tool-calling agent and prints each turn.
+func runToolAgent(cfg LLMConfig, prompt, systemPrompt string, debugMode bool) error {
+	registry := NewToolRegistry()
+	registry.Register(AskUserTool(), AskUserHandler)
+
+	agent := CreateToolAgent(cfg, registry, systemPrompt)
+	reader, err := agent(prompt)
+	if err != nil {
+		return fmt.Errorf("create tool agent: %w", err)
+	}
+	defer reader.Close()
+
+	for {
+		turn, err := reader.ReadTurn()
+		if err == io.EOF {
+			break
 		}
-		if !debugMode {
-			if resp.ReasoningContent != "" {
+		if err != nil {
+			return fmt.Errorf("read turn: %w", err)
+		}
+
+		if debugMode {
+			continue
+		}
+
+		switch turn.Role {
+		case "assistant":
+			if turn.ReasoningContent != "" {
 				fmt.Println("\n---")
-				fmt.Println("Reasoning:", resp.ReasoningContent)
+				fmt.Println("Reasoning:", turn.ReasoningContent)
 				fmt.Println("---")
 			}
-			fmt.Println("AI:", resp.Content)
-		}
-	} else if stream {
-		streamAgent := CreateStreamingAgent(cfg, systemPrompt)
-		reader, err := streamAgent(prompt)
-		if err != nil {
-			log.Fatalf("Failed to generate text: %v", err)
-		}
-		defer reader.Close()
-
-		var contentBuilder, reasoningBuilder strings.Builder
-		var printedAI, printedReasoning bool
-
-		for {
-			chunk, err := reader.ReadChunk()
-			if err == io.EOF {
-				break
+			if turn.Content != "" {
+				fmt.Println("AI:", turn.Content)
 			}
-			if err != nil {
-				log.Fatalf("Stream read failed: %v", err)
+			for _, tc := range turn.ToolCalls {
+				fmt.Printf("[Calling tool: %s]\n", tc.Function.Name)
 			}
-
-			if chunk.ReasoningContent != "" {
-				reasoningBuilder.WriteString(chunk.ReasoningContent)
-				if !debugMode && !printedReasoning {
-					fmt.Print("Reasoning: ")
-					printedReasoning = true
-				}
-				if !debugMode {
-					fmt.Print(chunk.ReasoningContent)
-				}
+			// Only signal the goroutine if there are more turns ahead.
+			if !turn.IsFinal {
+				reader.ackCh <- struct{}{}
 			}
-
-			if chunk.Content != "" {
-				contentBuilder.WriteString(chunk.Content)
-				if !debugMode && !printedAI {
-					if printedReasoning {
-						fmt.Println()
-					}
-					fmt.Print("AI: ")
-					printedAI = true
-				}
-				if !debugMode {
-					fmt.Print(chunk.Content)
-				}
-			}
-		}
-
-		if !debugMode {
-			fmt.Println()
-		}
-
-		resp, err := reader.Result()
-		if err != nil {
-			log.Fatalf("Stream error: %v", err)
-		}
-		_ = resp
-	} else {
-		agent := CreateAgent(cfg, systemPrompt)
-		resp, err := agent(prompt)
-		if err != nil {
-			log.Fatalf("Failed to generate text: %v", err)
-		}
-		if !debugMode {
-			if resp.ReasoningContent != "" {
-				fmt.Println("\n---")
-				fmt.Println("Reasoning:", resp.ReasoningContent)
-				fmt.Println("---")
-			}
-			fmt.Println("AI:", resp.Content)
+		case "tool":
+			fmt.Printf("[Tool result: %s] %s\n", turn.ToolName, turn.Content)
 		}
 	}
+
+	_, err = reader.Result()
+	return err
+}
+
+// runStreamAgent runs the streaming agent and prints tokens as they arrive.
+func runStreamAgent(cfg LLMConfig, prompt, systemPrompt string, debugMode bool) error {
+	streamAgent := CreateStreamingAgent(cfg, systemPrompt)
+	reader, err := streamAgent(prompt)
+	if err != nil {
+		return fmt.Errorf("create stream agent: %w", err)
+	}
+	defer reader.Close()
+
+	var contentBuilder, reasoningBuilder strings.Builder
+	var printedAI, printedReasoning bool
+
+	for {
+		chunk, err := reader.ReadChunk()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read chunk: %w", err)
+		}
+
+		if chunk.ReasoningContent != "" {
+			reasoningBuilder.WriteString(chunk.ReasoningContent)
+			if !debugMode && !printedReasoning {
+				fmt.Print("Reasoning: ")
+				printedReasoning = true
+			}
+			if !debugMode {
+				fmt.Print(chunk.ReasoningContent)
+			}
+		}
+
+		if chunk.Content != "" {
+			contentBuilder.WriteString(chunk.Content)
+			if !debugMode && !printedAI {
+				if printedReasoning {
+					fmt.Println()
+				}
+				fmt.Print("AI: ")
+				printedAI = true
+			}
+			if !debugMode {
+				fmt.Print(chunk.Content)
+			}
+		}
+	}
+
+	if !debugMode {
+		fmt.Println()
+	}
+
+	_, err = reader.Result()
+	return err
+}
+
+// runNormalAgent runs the simple non-streaming agent and prints the response.
+func runNormalAgent(cfg LLMConfig, prompt, systemPrompt string, debugMode bool) error {
+	agent := CreateAgent(cfg, systemPrompt)
+	resp, err := agent(prompt)
+	if err != nil {
+		return fmt.Errorf("generate text: %w", err)
+	}
+
+	if debugMode {
+		return nil
+	}
+
+	if resp.ReasoningContent != "" {
+		fmt.Println("\n---")
+		fmt.Println("Reasoning:", resp.ReasoningContent)
+		fmt.Println("---")
+	}
+	fmt.Println("AI:", resp.Content)
+	return nil
 }
 
 // LoadConfigFromEnv loads LLM configuration from environment variables.

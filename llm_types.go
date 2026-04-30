@@ -86,6 +86,30 @@ type openAIResponse struct {
 
 // ─── Tool Calling ───
 
+// Turn represents one message in a multi-turn tool-calling conversation.
+// It can be from the assistant or from a tool execution result.
+type Turn struct {
+	Role             string     // "assistant" or "tool"
+	Content          string     // assistant content or tool output
+	ReasoningContent string     // only for assistant
+	ToolCalls        []ToolCall // only for assistant
+	ToolCallID       string     // only for tool
+	ToolName         string     // only for tool
+	IsFinal          bool       // only for assistant: true if this is the last turn
+}
+
+// ToolCallReader reads multi-turn tool-calling progress turn by turn.
+// Use ReadTurn to iterate over each turn (assistant or tool).
+// After all turns are consumed, call Result() to get the aggregated final response.
+type ToolCallReader struct {
+	turnCh <-chan Turn
+	ackCh  chan<- struct{}
+	errCh  <-chan error
+	once   sync.Once
+	err    error
+	result LLMResponse
+}
+
 // Tool describes a function that the model may call.
 type Tool struct {
 	Type     string   `json:"type"`
@@ -121,4 +145,3 @@ type ToolCall struct {
 		Arguments string `json:"arguments"`
 	} `json:"function"`
 }
-
