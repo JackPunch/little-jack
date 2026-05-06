@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -21,9 +22,9 @@ func main() {
 		Thinking        bool
 		ReasoningEffort string
 
-		BaseUrl   string
+		BaseURL   string
 		ModelName string
-		ApiKey    string
+		APIKey    string
 	}
 	var config Config
 
@@ -62,11 +63,11 @@ func main() {
 		case "REASONING_EFFORT":
 			config.ReasoningEffort = value
 		case "BASE_URL":
-			config.BaseUrl = value
+			config.BaseURL = value
 		case "MODEL_NAME":
 			config.ModelName = value
 		case "API_KEY":
-			config.ApiKey = value
+			config.APIKey = value
 		}
 	}
 
@@ -82,7 +83,6 @@ func main() {
 		Role             string `json:"role"`
 		Content          string `json:"content"`
 		ReasoningContent string `json:"reasoning_content,omitempty"`
-		ToolCallId       string `json:"tool_call_id,omitempty"`
 	}
 	messages := []Message{
 		{Role: "system", Content: systemPrompt},
@@ -128,7 +128,7 @@ func main() {
 		panic(err)
 	}
 
-	url := config.BaseUrl + "/chat/completions"
+	url := config.BaseURL + "/chat/completions"
 	req, err := http.NewRequest(
 		"POST",
 		url,
@@ -140,7 +140,7 @@ func main() {
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+config.ApiKey)
+	req.Header.Set("Authorization", "Bearer "+config.APIKey)
 
 	// ==============================================
 	// 发送请求
@@ -154,5 +154,43 @@ func main() {
 	// ==============================================
 	// 解析响应
 	// ==============================================
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
 
+	// ==============================================
+	// 先打印看看
+	// ==============================================
+	// var prettyJSON bytes.Buffer
+	// if err := json.Indent(&prettyJSON, respBody, "", "  "); err == nil {
+	// 	fmt.Println(prettyJSON.String())
+	// }
+
+	type ResponseBody struct {
+		ID      string `json:"id"`
+		Choices []struct {
+			FinishReason string  `json:"finish_reason"`
+			Index        int64   `json:"index"`
+			Message      Message `json:"message"`
+		} `json:"choices"`
+		Created           int64  `json:"created"`
+		Model             string `json:"model"`
+		SystemFingerprint string `json:"system_fingerprint"`
+		Object            string `json:"object"`
+		Usage             struct {
+			CompletionTokens      int64 `json:"completion_tokens"`
+			PromptTokens          int64 `json:"prompt_tokens"`
+			PromptCacheHitTokens  int64 `json:"prompt_cache_hit_tokens"`
+			PromptCacheMissTokens int64 `json:"prompt_cache_miss_tokens"`
+			TotalTokens           int64 `json:"total_tokens"`
+		} `json:"usage"`
+	}
+
+	var result ResponseBody
+	err = json.Unmarshal(respBody, &result)
+	if err != nil {
+		panic(err)
+	}
+	// fmt.Println(result)
 }
