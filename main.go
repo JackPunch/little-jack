@@ -6,32 +6,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 )
 
-func main() {
-	// ==============================================
-	// 先读取.env环境变量
-	// ==============================================
-	type Config struct {
-		Debug           bool
-		Stream          bool
-		Tools           bool
-		Thinking        bool
-		ReasoningEffort string
+type Config struct {
+	Debug           bool
+	Stream          bool
+	Tools           bool
+	Thinking        bool
+	ReasoningEffort string
 
-		BaseURL   string
-		ModelName string
-		APIKey    string
-	}
+	BaseURL   string
+	ModelName string
+	APIKey    string
+}
+
+func getConfig() (Config, error) {
 	var config Config
 
 	file, err := os.Open(".env")
 	if err != nil {
-		panic(err)
+		return Config{}, err
 	}
 	defer file.Close()
 
@@ -71,44 +70,55 @@ func main() {
 			config.APIKey = value
 		}
 	}
+	return config, nil
+}
 
-	// ==============================================
-	// 创建提示词
-	// ==============================================
-	systemPrompt := "You are a helpful assistant."
-	userPrompt := "What is the capital of France?"
-	if len(os.Args) > 1 && os.Args[1] != "" {
-		userPrompt = os.Args[1]
-	}
-	type Message struct {
-		Role             string `json:"role"`
-		Content          string `json:"content"`
-		ReasoningContent string `json:"reasoning_content,omitempty"`
-	}
-	messages := []Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: userPrompt},
-	}
+type Message struct {
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+}
 
-	// ==============================================
-	// 创建请求
-	// ==============================================
+type RequestBody struct {
+	Messages []Message `json:"messages"`
+	Model    string    `json:"model"`
+	Thinking struct {
+		Type string `json:"type"`
+	} `json:"thinking,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	Stream          bool   `json:"stream,omitempty"`
+}
+
+type ResponseBody struct {
+	ID      string `json:"id"`
+	Choices []struct {
+		FinishReason string  `json:"finish_reason"`
+		Index        int64   `json:"index"`
+		Message      Message `json:"message"`
+	} `json:"choices"`
+	Created           int64  `json:"created"`
+	Model             string `json:"model"`
+	SystemFingerprint string `json:"system_fingerprint"`
+	Object            string `json:"object"`
+	Usage             struct {
+		CompletionTokens      int64 `json:"completion_tokens"`
+		PromptTokens          int64 `json:"prompt_tokens"`
+		PromptCacheHitTokens  int64 `json:"prompt_cache_hit_tokens"`
+		PromptCacheMissTokens int64 `json:"prompt_cache_miss_tokens"`
+		TotalTokens           int64 `json:"total_tokens"`
+	} `json:"usage"`
+}
+
+type Agent struct {
+	Config Config
+}
+
+func (agent *Agent) Chat(messages []Message) (Message, error) {
 	client := &http.Client{
 		Timeout: 150 * time.Second,
 	}
-
-	type RequestBody struct {
-		Messages []Message `json:"messages"`
-		Model    string    `json:"model"`
-		Thinking struct {
-			Type string `json:"type"`
-		} `json:"thinking,omitempty"`
-		ReasoningEffort string `json:"reasoning_effort,omitempty"`
-		Stream          bool   `json:"stream,omitempty"`
-		Tools           string `json:"tools,omitempty"` // 暂不支持，占位
-	}
 	var thinkingType string
-	if config.Thinking {
+	if agent.Config.Thinking {
 		thinkingType = "enabled"
 	} else {
 		thinkingType = "disabled"
@@ -116,151 +126,70 @@ func main() {
 
 	body := RequestBody{
 		Messages: messages,
-		Model:    config.ModelName,
+		Model:    agent.Config.ModelName,
 		Thinking: struct {
 			Type string `json:"type"`
 		}{Type: thinkingType},
-		ReasoningEffort: config.ReasoningEffort,
-		Stream:          config.Stream,
+		ReasoningEffort: agent.Config.ReasoningEffort,
+		Stream:          agent.Config.Stream,
 	}
 
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
-		panic(err)
+		return Message{}, err
 	}
 
-	url := config.BaseURL + "/chat/completions"
+	url := agent.Config.BaseURL + "/chat/completions"
 	req, err := http.NewRequest(
 		"POST",
 		url,
 		bytes.NewReader(jsonBody),
 	)
 	if err != nil {
-		panic(err)
+		return Message{}, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
+	req.Header.Set("Authorization", "Bearer "+agent.Config.APIKey)
 
-	// ==============================================
-	// 发送请求
-	// ==============================================
 	resp, err := client.Do(req)
 	if err != nil {
-		panic(err)
+		return Message{}, err
 	}
 	defer resp.Body.Close()
 
-	// ==============================================
-	// 解析响应
-	// ==============================================
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		panic(err)
-	}
-
-	// ==============================================
-	// 先打印看看
-	// ==============================================
-	// var prettyJSON bytes.Buffer
-	// if err := json.Indent(&prettyJSON, respBody, "", "  "); err == nil {
-	// 	fmt.Println(prettyJSON.String())
-	// }
-
-	type ResponseBody struct {
-		ID      string `json:"id"`
-		Choices []struct {
-			FinishReason string  `json:"finish_reason"`
-			Index        int64   `json:"index"`
-			Message      Message `json:"message"`
-		} `json:"choices"`
-		Created           int64  `json:"created"`
-		Model             string `json:"model"`
-		SystemFingerprint string `json:"system_fingerprint"`
-		Object            string `json:"object"`
-		Usage             struct {
-			CompletionTokens      int64 `json:"completion_tokens"`
-			PromptTokens          int64 `json:"prompt_tokens"`
-			PromptCacheHitTokens  int64 `json:"prompt_cache_hit_tokens"`
-			PromptCacheMissTokens int64 `json:"prompt_cache_miss_tokens"`
-			TotalTokens           int64 `json:"total_tokens"`
-		} `json:"usage"`
+		return Message{}, err
 	}
 
 	var result ResponseBody
 	err = json.Unmarshal(respBody, &result)
 	if err != nil {
-		panic(err)
-	}
-	// fmt.Println(result)
-	fmt.Println(result.Choices[0].Message.Content)
-
-	// ==============================================
-	// 构造第二次请求
-	// ==============================================
-	messages = append(messages, result.Choices[0].Message)
-
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-
-	newMessage := Message{
-		Role:    "user",
-		Content: input,
+		return Message{}, err
 	}
 
-	messages = append(messages, newMessage)
+	return result.Choices[0].Message, err
+}
 
-	body = RequestBody{
-		Messages: messages,
-		Model:    config.ModelName,
-		Thinking: struct {
-			Type string `json:"type"`
-		}{Type: thinkingType},
-		ReasoningEffort: config.ReasoningEffort,
-		Stream:          config.Stream,
-	}
-
-	jsonBody, err = json.Marshal(body)
+func main() {
+	config, err := getConfig()
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
+	}
+	agent := Agent{
+		Config: config,
 	}
 
-	req, err = http.NewRequest(
-		"POST",
-		url,
-		bytes.NewReader(jsonBody),
-	)
+	messages := []Message{
+		{Role: "system", Content: "你是一个ai助手"},
+		{Role: "user", Content: "你好"},
+	}
+
+	newMessage, err := agent.Chat(messages)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-
-	// ==============================================
-	// 发送请求
-	// ==============================================
-	resp, err = client.Do(req)
-	if err != nil {
-		panic(err)
-	}
-	defer resp.Body.Close()
-
-	// ==============================================
-	// 解析响应
-	// ==============================================
-	respBody, err = io.ReadAll(resp.Body)
-	if err != nil {
-		panic(err)
-	}
-
-	err = json.Unmarshal(respBody, &result)
-	if err != nil {
-		panic(err)
-	}
-	// fmt.Println(result)
-	fmt.Println(result.Choices[0].Message.Content)
-
+	fmt.Println(newMessage.Content)
 }
