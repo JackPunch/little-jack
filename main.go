@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -193,4 +194,73 @@ func main() {
 		panic(err)
 	}
 	// fmt.Println(result)
+	fmt.Println(result.Choices[0].Message.Content)
+
+	// ==============================================
+	// 构造第二次请求
+	// ==============================================
+	messages = append(messages, result.Choices[0].Message)
+
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+
+	newMessage := Message{
+		Role:    "user",
+		Content: input,
+	}
+
+	messages = append(messages, newMessage)
+
+	body = RequestBody{
+		Messages: messages,
+		Model:    config.ModelName,
+		Thinking: struct {
+			Type string `json:"type"`
+		}{Type: thinkingType},
+		ReasoningEffort: config.ReasoningEffort,
+		Stream:          config.Stream,
+	}
+
+	jsonBody, err = json.Marshal(body)
+	if err != nil {
+		panic(err)
+	}
+
+	req, err = http.NewRequest(
+		"POST",
+		url,
+		bytes.NewReader(jsonBody),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+config.APIKey)
+
+	// ==============================================
+	// 发送请求
+	// ==============================================
+	resp, err = client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	// ==============================================
+	// 解析响应
+	// ==============================================
+	respBody, err = io.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+
+	err = json.Unmarshal(respBody, &result)
+	if err != nil {
+		panic(err)
+	}
+	// fmt.Println(result)
+	fmt.Println(result.Choices[0].Message.Content)
+
 }
