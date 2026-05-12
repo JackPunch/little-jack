@@ -59,7 +59,7 @@ func getConfig() (*Config, error) {
 		case "TOOLS":
 			config.Tools = value == "true"
 		case "THINKING_TYPE":
-			config.Thinking = value == "enabled"
+			config.Thinking = value != "disabled" //根据 DeepSeek API 文档，thinking.type 为空时默认开启思考模式
 		case "REASONING_EFFORT":
 			config.ReasoningEffort = value
 		case "BASE_URL":
@@ -69,6 +69,16 @@ func getConfig() (*Config, error) {
 		case "API_KEY":
 			config.APIKey = value
 		}
+	}
+
+	if config.BaseURL == "" {
+		return nil, fmt.Errorf("BASE_URL is required")
+	}
+	if config.ModelName == "" {
+		return nil, fmt.Errorf("MODEL_NAME is required")
+	}
+	if config.APIKey == "" {
+		return nil, fmt.Errorf("API_KEY is required")
 	}
 	return &config, nil
 }
@@ -195,7 +205,7 @@ func (agent *Agent) Chat(messages []Message) (Message, error) {
 func main() {
 	config, err := getConfig()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("load config: %v", err)
 	}
 	agent := Agent{
 		Config: config,
