@@ -84,7 +84,7 @@ func getConfig() (*Config, error) {
 }
 
 type Message struct {
-	Role             string `json:"role"`
+	Role             Role   `json:"role"`
 	Content          string `json:"content"`
 	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
@@ -129,6 +129,15 @@ type Agent struct {
 	Config *Config
 	Client *http.Client
 }
+
+type Role string
+
+const (
+	RoleSystem    Role = "system"
+	RoleUser      Role = "user"
+	RoleAssistant Role = "assistant"
+	RoleTool      Role = "tool"
+)
 
 func (agent *Agent) Chat(messages []Message) (Message, error) {
 	if agent == nil {
@@ -215,8 +224,8 @@ func main() {
 	}
 
 	messages := []Message{
-		{Role: "system", Content: "你是一个ai助手"},
-		{Role: "user", Content: "你好"},
+		{Role: RoleSystem, Content: "你是一个ai助手"},
+		{Role: RoleUser, Content: "你好"},
 	}
 
 	newMessage, err := agent.Chat(messages)
