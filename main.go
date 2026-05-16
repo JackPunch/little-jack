@@ -35,6 +35,18 @@ func (c *Config) Validate() error {
 	if c.APIKey == "" {
 		return fmt.Errorf("api_key is required")
 	}
+	if c.Debug {
+		return fmt.Errorf("debug mode is not supported")
+	}
+	if c.Stream {
+		return fmt.Errorf("stream output is not supported")
+	}
+	if c.Tools {
+		return fmt.Errorf("tool calling is not supported")
+	}
+	if !c.Thinking {
+		return fmt.Errorf("thinking disabled mode is not supported")
+	}
 	return nil
 }
 
