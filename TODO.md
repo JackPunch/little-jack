@@ -1,12 +1,16 @@
-# little-jack 改进清单
-
-1. - [x] 增加配置验证，提前暴露缺失的必填项
-2. - [x] 定义消息角色的常量，替代裸字符串
-3. - [ ] 用构造函数替代 `Chat` 中的 nil 检查
-4. - [ ] API 非 200 响应时返回详细错误信息
-5. - [ ] `Thinking` 字段应按需发送，避免传 `disabled`
-6. - [ ] 手写 `.env` 解析器支持引号值
-7. - [ ] `Stream` 配置与 `Chat` 实现不匹配
-8. - [ ] 拆分文件，改善包结构
-9. - [ ] 提取裸字符串为常量（`.env` 文件名、环境变量键名、HTTP Header、`/chat/completions`、`enabled`/`disabled` 等）
-
+- [x] 增加配置验证，提前暴露缺失的必填项
+- [x] 用构造函数替代 `Chat` 中的 config/client nil 检查
+- [ ] **Stream 配置与 Chat 实现不匹配**：`Stream=true` 时走 SSE 流式，当前直接 `json.Unmarshal` 会崩溃；若暂不支持应显式报错
+- [ ] **API 非 200 响应时返回详细错误信息**：目前只返回 status code，应带上 response body 便于排障
+- [ ] **修复 URL 拼接双斜杠**：`BaseURL` 尾部带 `/` 时会产生 `//chat/completions`，需 `strings.TrimSuffix` 处理
+- [x] 定义消息角色的常量，替代裸字符串
+- [x] **去掉 `Chat()` 中 `agent == nil` 的检查**：Go 共识里 receiver nil 是调用方责任，不必防御
+- [ ] **`Chat()` 方法签名添加 `context.Context`**：支持请求取消和超时控制，替代全局 150s
+- [ ] **利用 `Debug` 字段输出调试信息**：目前注册了但 nowhere 使用，至少打印 request/response body
+- [ ] **`Thinking` 字段用值类型替代指针**：当前总是构造 `&Thinking{}`，指针无意义
+- [ ] **Config 结构体加标签**：为后续迁移到 `github.com/caarlos0/env` 或 `mapstructure` 留接口
+- [ ] **拆分文件，改善包结构**：按 config / client / types / main 分层，避免所有逻辑挤在 main.go
+- [ ] **提取裸字符串为常量**：`.env` 文件名、环境变量键名、HTTP Header 键、`/chat/completions`、`enabled`/`disabled` 等
+- [ ] **定义 `ChatClient` 接口**：方便后续单元测试 mock，不依赖真实 API
+- [ ] **`NewAgent` 支持自定义 HTTP Client**（Functional Options）：允许注入代理、自定义 Transport、调整 Timeout
+- [ ] **敏感配置文件权限校验**：启动时检查 `.env` 文件权限，避免 644 导致 API Key 泄漏

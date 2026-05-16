@@ -25,6 +25,19 @@ type Config struct {
 	APIKey    string
 }
 
+func (c *Config) Validate() error {
+	if c.BaseURL == "" {
+		return fmt.Errorf("base_url is required")
+	}
+	if c.ModelName == "" {
+		return fmt.Errorf("model_name is required")
+	}
+	if c.APIKey == "" {
+		return fmt.Errorf("api_key is required")
+	}
+	return nil
+}
+
 func getConfig() (*Config, error) {
 	var config Config
 
@@ -71,15 +84,11 @@ func getConfig() (*Config, error) {
 		}
 	}
 
-	if config.BaseURL == "" {
-		return nil, fmt.Errorf("BASE_URL is required")
+	err = config.Validate()
+	if err != nil {
+		return nil, err
 	}
-	if config.ModelName == "" {
-		return nil, fmt.Errorf("MODEL_NAME is required")
-	}
-	if config.APIKey == "" {
-		return nil, fmt.Errorf("API_KEY is required")
-	}
+
 	return &config, nil
 }
 
@@ -125,9 +134,27 @@ type ResponseBody struct {
 	Usage             Usage    `json:"usage"`
 }
 
-type Agent struct {
-	Config *Config
-	Client *http.Client
+type agent struct {
+	config *Config
+	client *http.Client
+}
+
+func NewAgent(config *Config) (*agent, error) {
+	if config == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+
+	err := config.Validate()
+	if err != nil {
+		return nil, err
+	}
+
+	return &agent{
+		config: config,
+		client: &http.Client{
+			Timeout: 150 * time.Second,
+		},
+	}, nil
 }
 
 type Role string
@@ -139,19 +166,9 @@ const (
 	RoleTool      Role = "tool"
 )
 
-func (agent *Agent) Chat(messages []Message) (Message, error) {
-	if agent == nil {
-		return Message{}, fmt.Errorf("agent is nil")
-	}
-	if agent.Config == nil {
-		return Message{}, fmt.Errorf("agent config is nil")
-	}
-	if agent.Client == nil {
-		return Message{}, fmt.Errorf("agent client is nil")
-	}
-
+func (agent *agent) Chat(messages []Message) (Message, error) {
 	var thinkingType string
-	if agent.Config.Thinking {
+	if agent.config.Thinking {
 		thinkingType = "enabled"
 	} else {
 		thinkingType = "disabled"
@@ -159,10 +176,10 @@ func (agent *Agent) Chat(messages []Message) (Message, error) {
 
 	body := RequestBody{
 		Messages:        messages,
-		Model:           agent.Config.ModelName,
+		Model:           agent.config.ModelName,
 		Thinking:        &Thinking{Type: thinkingType},
-		ReasoningEffort: agent.Config.ReasoningEffort,
-		Stream:          agent.Config.Stream,
+		ReasoningEffort: agent.config.ReasoningEffort,
+		Stream:          agent.config.Stream,
 	}
 
 	jsonBody, err := json.Marshal(body)
@@ -170,7 +187,7 @@ func (agent *Agent) Chat(messages []Message) (Message, error) {
 		return Message{}, fmt.Errorf("marshal request body: %w", err)
 	}
 
-	url := agent.Config.BaseURL + "/chat/completions"
+	url := agent.config.BaseURL + "/chat/completions"
 	req, err := http.NewRequest(
 		http.MethodPost,
 		url,
@@ -182,9 +199,9 @@ func (agent *Agent) Chat(messages []Message) (Message, error) {
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+agent.Config.APIKey)
+	req.Header.Set("Authorization", "Bearer "+agent.config.APIKey)
 
-	resp, err := agent.Client.Do(req)
+	resp, err := agent.client.Do(req)
 	if err != nil {
 		return Message{}, fmt.Errorf("do HTTP request: %w", err)
 	}
@@ -216,11 +233,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	agent := Agent{
-		Config: config,
-		Client: &http.Client{
-			Timeout: 150 * time.Second,
-		},
+	agent, err := NewAgent(config)
+	if err != nil {
+		log.Fatalf("create agent: %v", err)
 	}
 
 	messages := []Message{
