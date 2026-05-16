@@ -51,7 +51,9 @@ func (c *Config) Validate() error {
 }
 
 func getConfig() (*Config, error) {
-	var config Config
+	config := Config{
+		Thinking: true,
+	}
 
 	file, err := os.Open(".env")
 	if err != nil {
@@ -84,7 +86,7 @@ func getConfig() (*Config, error) {
 		case "TOOLS":
 			config.Tools = value == "true"
 		case "THINKING_TYPE":
-			config.Thinking = value != "disabled" //根据 DeepSeek API 文档，thinking.type 为空时默认开启思考模式
+			config.Thinking = value != "disabled"
 		case "REASONING_EFFORT":
 			config.ReasoningEffort = value
 		case "BASE_URL":
@@ -272,6 +274,10 @@ func main() {
 		}
 		messages = append(messages, newMessage)
 		fmt.Println()
+		if config.Thinking {
+			fmt.Println("Thinking: ")
+			fmt.Println(newMessage.ReasoningContent)
+		}
 		fmt.Println("Assistant: ")
 		fmt.Println(newMessage.Content)
 		fmt.Println()
