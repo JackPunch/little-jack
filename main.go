@@ -240,12 +240,29 @@ func main() {
 
 	messages := []Message{
 		{Role: RoleSystem, Content: "你是一个ai助手"},
-		{Role: RoleUser, Content: "你好"},
 	}
 
-	newMessage, err := agent.Chat(messages)
-	if err != nil {
-		log.Fatal(err)
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		fmt.Println("User: ")
+		line, _ := reader.ReadString('\n')
+		line = strings.TrimSpace(line)
+
+		messages = append(messages, Message{
+			Role:    RoleUser,
+			Content: line,
+		})
+
+		newMessage, err := agent.Chat(messages)
+		if err != nil {
+			log.Fatal(err)
+		}
+		messages = append(messages, newMessage)
+		fmt.Println()
+		fmt.Println("Assistant: ")
+		fmt.Println(newMessage.Content)
+		fmt.Println()
 	}
-	fmt.Println(newMessage.Content)
+
 }

@@ -1,7 +1,10 @@
 ## P1 — 核心功能 / 用户体验（尽快完成，让程序真正可用）
 
 - [ ] **改为用 `~/little-jack/config.json` 设置参数，并支持交互式设置**：替代 `.env`，JSON 更结构化；若配置文件不存在，交互式提示用户输入并自动创建。配置是入口，越早改后续改动范围越小
-- [ ] **增加主循环，支持多轮对话**：当前 main() 只执行一次硬编码对话，应改为交互式循环读取用户输入，维护 message 上下文
+- [x] **增加主循环，支持多轮对话**：当前 main() 只执行一次硬编码对话，应改为交互式循环读取用户输入，维护 message 上下文
+- [ ] **修复主循环错误处理缺陷**：`reader.ReadString` 忽略 EOF 会导致死循环发送空请求；API 错误在循环内使用 `log.Fatal` 会导致程序直接退出。应改为：EOF 时优雅退出、API 错误打印后 `continue`、跳过空输入
+- [ ] **增加退出指令与输入优化**：支持输入 `exit` / `quit` 优雅退出；`fmt.Print("User: ")` 替代 `fmt.Println` 让输入紧跟提示符
+- [ ] **控制对话上下文长度**：目前 `messages` 无限增长，长对话会触发 API token 上限。后续需按轮数或 token 截断历史
 - [ ] **支持流式输出**：`Config.Stream` 已存在但 Chat() 未实现 SSE 解析，需按 OpenAI SSE 格式逐块输出 delta。大模型交互的基础体验，与 P0 崩溃 bug 联动
 - [ ] **支持显示思考内容**：`Message.ReasoningContent` 已定义但 nowhere 输出，需在 `Thinking=true` 时打印 reasoning_content。实现成本低，收益高
 - [ ] **`Chat()` 方法签名添加 `context.Context`**：支持请求取消和超时控制，替代全局 150s
