@@ -260,8 +260,22 @@ func main() {
 
 	for {
 		fmt.Println("User: ")
-		line, _ := reader.ReadString('\n')
+		line, err := reader.ReadString('\n')
+		isEOF := err == io.EOF
+
+		if err != nil && !isEOF {
+			log.Printf("read input: %v", err)
+			continue
+		}
+
 		line = strings.TrimSpace(line)
+
+		if line == "" {
+			if isEOF {
+				break
+			}
+			continue
+		}
 
 		messages = append(messages, Message{
 			Role:    RoleUser,
@@ -270,7 +284,9 @@ func main() {
 
 		newMessage, err := agent.Chat(messages)
 		if err != nil {
-			log.Fatal(err)
+			log.Printf("API call failed: %v", err)
+			messages = messages[:len(messages)-1]
+			continue
 		}
 		messages = append(messages, newMessage)
 		fmt.Println()
