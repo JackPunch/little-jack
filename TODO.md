@@ -4,7 +4,7 @@
 - [x] **增加主循环，支持多轮对话**：当前 main() 只执行一次硬编码对话，应改为交互式循环读取用户输入，维护 message 上下文
 - [x] **修复主循环错误处理缺陷**：`reader.ReadString` 忽略 EOF 会导致死循环发送空请求；API 错误在循环内使用 `log.Fatal` 会导致程序直接退出。应改为：EOF 时优雅退出、API 错误打印后 `continue`、跳过空输入
 - [ ] **完善回退机制**：当前 API 调用失败仅简单弹出最后一条用户消息，需进一步考虑重试策略、失败提示及历史状态一致性
-- [ ] **增加退出指令与输入优化**：支持输入 `exit` / `quit` 优雅退出；`fmt.Print("User: ")` 替代 `fmt.Println` 让输入紧跟提示符
+- [ ] **增加退出指令与输入优化**：支持输入 `exit` / `quit` 优雅退出
 - [ ] **控制对话上下文长度**：目前 `messages` 无限增长，长对话会触发 API token 上限。后续需按轮数或 token 截断历史
 - [ ] **支持流式输出**：`Config.Stream` 已存在但 Chat() 未实现 SSE 解析，需按 OpenAI SSE 格式逐块输出 delta。大模型交互的基础体验，与 P0 崩溃 bug 联动
 - [x] **支持显示思考内容**：`Message.ReasoningContent` 已定义但 nowhere 输出，需在 `Thinking=true` 时打印 reasoning_content。实现成本低，收益高
