@@ -98,6 +98,10 @@ func getConfig() (*Config, error) {
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan .env file: %w", err)
+	}
+
 	err = config.Validate()
 	if err != nil {
 		return nil, err
