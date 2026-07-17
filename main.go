@@ -11,19 +11,22 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Debug           bool
-	Stream          bool
-	Tools           bool
-	Thinking        bool
-	ReasoningEffort string
-
-	BaseURL   string
-	ModelName string
-	APIKey    string
+	BaseURL         string `yaml:"base_url"`
+	ModelName       string `yaml:"model_name"`
+	APIKey          string `yaml:"api_key"`
+	Thinking        bool   `yaml:"thinking"`
+	ReasoningEffort string `yaml:"reasoning_effort"`
+	Stream          bool   `yaml:"stream"`
+	Tools           bool   `yaml:"tools"`
+	Debug           bool   `yaml:"debug"`
 }
+
+const configFile = "config.yaml"
 
 func (c *Config) Validate() error {
 	if c.BaseURL == "" {
@@ -51,55 +54,52 @@ func (c *Config) Validate() error {
 }
 
 func getConfig() (*Config, error) {
-	config := Config{
-		Thinking: true,
-	}
+	var config Config
 
-	file, err := os.Open(".env")
-	if err != nil {
-		return nil, fmt.Errorf("open .env file: %w", err)
-	}
-	defer file.Close()
+	_, err := os.Stat(configFile)
+	if os.IsNotExist(err) {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Println("Please input base url:")
+		config.BaseURL, err = reader.ReadString('\n')
+		if err != nil {
+			return nil, fmt.Errorf("read base url: %w", err)
+		}
+		config.BaseURL = strings.TrimSpace(config.BaseURL)
+		fmt.Println("Please input model name:")
+		config.ModelName, err = reader.ReadString('\n')
+		if err != nil {
+			return nil, fmt.Errorf("read model name: %w", err)
+		}
+		config.ModelName = strings.TrimSpace(config.ModelName)
+		fmt.Println("Please input api key:")
+		config.APIKey, err = reader.ReadString('\n')
+		if err != nil {
+			return nil, fmt.Errorf("read api key: %w", err)
+		}
+		config.APIKey = strings.TrimSpace(config.APIKey)
+		config.Thinking = true
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line0 := scanner.Text()
-		line1 := strings.TrimSpace(line0)
-		if line1 == "" {
-			continue
+		data, err := yaml.Marshal(config)
+		if err != nil {
+			return nil, fmt.Errorf("marshal config: %w", err)
 		}
-		if strings.HasPrefix(line1, "#") {
-			continue
-		}
-		parts := strings.SplitN(line1, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
 
-		switch key {
-		case "DEBUG":
-			config.Debug = value == "true"
-		case "STREAM":
-			config.Stream = value == "true"
-		case "TOOLS":
-			config.Tools = value == "true"
-		case "THINKING_TYPE":
-			config.Thinking = value != "disabled"
-		case "REASONING_EFFORT":
-			config.ReasoningEffort = value
-		case "BASE_URL":
-			config.BaseURL = value
-		case "MODEL_NAME":
-			config.ModelName = value
-		case "API_KEY":
-			config.APIKey = value
+		err = os.WriteFile(configFile, data, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("write %s file: %w", configFile, err)
 		}
-	}
+	} else if err != nil {
+		return nil, fmt.Errorf("stat %s file: %w", configFile, err)
+	} else {
+		file, err := os.ReadFile(configFile)
+		if err != nil {
+			return nil, fmt.Errorf("read %s file: %w", configFile, err)
+		}
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan .env file: %w", err)
+		err = yaml.Unmarshal(file, &config)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal %s file: %w", configFile, err)
+		}
 	}
 
 	err = config.Validate()
@@ -257,7 +257,7 @@ func main() {
 	}
 
 	messages := []Message{
-		{Role: RoleSystem, Content: "你是一个ai助手"},
+		{Role: RoleSystem, Content: "You are a helpful assistant."},
 	}
 
 	reader := bufio.NewReader(os.Stdin)

@@ -1,4 +1,5 @@
 .env
+config.yaml
 
 # Go build artifacts
 *.exe

@@ -1,0 +1,4 @@
+base_url: https://api.deepseek.com
+model_name: deepseek-v4-flash
+api_key: sk-xxxxxxxxxxxxxxxxxxx
+thinking: true
