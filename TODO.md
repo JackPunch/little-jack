@@ -1,6 +1,6 @@
 ## P1 — 核心功能 / 用户体验（尽快完成，让程序真正可用）
 
-- [ ] **拆分文件**：将 main.go 按职责拆为 main.go / config.go / types.go / agent.go / tools.go，同一 package main。当前所有逻辑挤在单文件，越早拆后续改动成本越低
+- [x] **拆分文件**：将 main.go 按职责拆为 main.go / config.go / openai.go / agent.go / tools.go，同一 package main。当前所有逻辑挤在单文件，越早拆后续改动成本越低
 - [ ] **完善工具调用**：当前工具调用仅在 main 循环中硬编码 `MockTool.findNews`，需实现通用工具注册机制、支持多轮 tool call 循环、`tool_choice` 参数控制
 - [ ] **修复工具调用后出错导致死循环**：当 `isToolCalling=true` 时若 `Chat()` 失败，代码弹出最后一条消息后 `continue`，但 `isToolCalling` 未重置为 `false`，导致下一轮跳过用户输入再次调用 API，陷入无限循环。应在出错时将 `isToolCalling` 置 `false` 并清理已追加的 tool result 消息
 - [ ] **完善回退机制**：当前 API 调用失败仅简单弹出最后一条用户消息，需进一步考虑重试策略、失败提示及历史状态一致性
